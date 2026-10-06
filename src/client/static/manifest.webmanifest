@@ -1,0 +1,10 @@
+{
+  "name": "Republic Battles",
+  "short_name": "Republic Battles",
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0b1a2b",
+  "theme_color": "#0b1a2b",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
