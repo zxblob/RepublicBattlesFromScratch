@@ -1,4 +1,4 @@
-import { CFG, TECH, TECH_IDS } from "./config";
+import { CFG, MISSILES, MissileKind, TECH, TECH_IDS } from "./config";
 import type { StructType } from "./config";
 import type { Game, Player } from "./game";
 import { Terrain } from "./mapgen";
@@ -18,6 +18,7 @@ export function botThink(g: Game, p: Player): void {
   botResearch(g, p);
   const scan = g.scanBorder(p.id);
   tryBuild(g, p, scan.ownFront);
+  botMilitary(g, p, scan);
   botNaval(g, p, scan.neutral.length === 0 && scan.enemies.size === 0);
   if (g.attacksOf(p.id).length >= 2) return;
   if (p.troops < g.maxTroops(p) * 0.35) return;
@@ -63,7 +64,7 @@ function botResearch(g: Game, p: Player): void {
 }
 
 function tryBuild(g: Game, p: Player, front: number[]): void {
-  const options: StructType[] = ["bunker", "bank", "radar", "sam", "city", "farm", "port"];
+  const options: StructType[] = ["bunker", "bank", "radar", "sam", "city", "farm", "port", "factory", "tankfactory", "airbase", "silo"];
   if (g.research) options.push("lab");
   const type = pick(g, options);
   if (p.gold < g.structureCost(p.id, type) + 50) return;
@@ -101,4 +102,52 @@ function botNaval(g: Game, p: Player, landLocked: boolean): void {
     }
   }
   p.nextBoat = g.tickNo + 300;
+}
+
+type Scan = ReturnType<Game["scanBorder"]>;
+
+/** Bots with a Tank Factory, Airbase or Silo actually use them. */
+function botMilitary(g: Game, p: Player, scan: Scan): void {
+  if (g.phase === "cold" || g.tickNo < (p.nextMilitary ?? 0)) return;
+  p.nextMilitary = g.tickNo + Math.round(150 / p.aggression);
+  const enemyIds = [...scan.enemies.keys()].filter((id) => !g.friendly(p.id, id));
+  const mine = g.units.filter((u) => u.owner === p.id);
+
+  // tanks: follow the biggest running attack, otherwise sit on the front
+  if (g.ownedCount(p.id, "tankfactory")) {
+    if (mine.filter((u) => u.kind === "t").length < 3) g.trainUnit(p.id, "t");
+    const atk = g.attacks.filter((a) => a.by === p.id).sort((a, b) => b.pool - a.pool)[0];
+    for (const t of mine.filter((u) => u.kind === "t" && u.path.length === 0)) {
+      if (atk) g.moveUnit(p.id, t.id, [atk.cx, atk.cy]);
+      else if (scan.ownFront.length) {
+        const f = scan.ownFront[Math.floor(g.rng() * scan.ownFront.length)];
+        g.moveUnit(p.id, t.id, [(f % g.w) + 0.5, Math.floor(f / g.w) + 0.5]);
+      }
+    }
+  }
+
+  // aircraft: bombers hunt enemy buildings, one fighter guards the capital
+  if (g.ownedCount(p.id, "airbase")) {
+    if (mine.filter((u) => u.kind === "b").length < 2) g.trainUnit(p.id, "b");
+    else if (mine.filter((u) => u.kind === "f").length < 1) g.trainUnit(p.id, "f");
+    const targets = g.structures.filter((s) => s.owner !== p.id && !g.friendly(p.id, s.owner) && enemyIds.includes(s.owner));
+    for (const b of mine.filter((u) => u.kind === "b" && u.path.length === 0 && u.ammo > 0)) {
+      if (!targets.length) break;
+      const t = targets[Math.floor(g.rng() * targets.length)];
+      g.moveUnit(p.id, b.id, [t.x + 0.5, t.y + 0.5]);
+    }
+    for (const f of mine.filter((u) => u.kind === "f" && u.path.length === 0)) {
+      if (p.capital >= 0) g.moveUnit(p.id, f.id, [(p.capital % g.w) + 0.5 + (g.rng() - 0.5) * 6, Math.floor(p.capital / g.w) + 0.5]);
+    }
+  }
+
+  // missiles at the strongest hostile neighbour's capital
+  if (g.ownedCount(p.id, "silo") && enemyIds.length && g.rng() < 0.4) {
+    const target = enemyIds.map((id) => g.players[id]).sort((a, b) => b.tiles - a.tiles)[0];
+    if (target && target.capital >= 0) {
+      const kinds: MissileKind[] = ["mirv", "hydrogen", "atom"];
+      const kind = kinds.find((k) => p.gold >= MISSILES[k].cost * 1.2) ?? "atom";
+      g.launchMissile(p.id, (target.capital % g.w) + 0.5, Math.floor(target.capital / g.w) + 0.5, kind);
+    }
+  }
 }

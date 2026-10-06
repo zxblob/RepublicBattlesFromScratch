@@ -2,7 +2,7 @@ import type { StructType } from "./config";
 
 export type Mode = "ffa" | "team" | "ww" | "wow";
 export type MapSize = "small" | "medium" | "large" | "huge";
-export type UnitK = "t" | "f" | "b" | "x" | "w";
+export type UnitK = "t" | "f" | "b" | "x" | "w" | "r";
 
 export const MAP_SIZES: Record<MapSize, [number, number]> = {
   small: [192, 112],
@@ -17,8 +17,10 @@ export interface GameSetup {
   bots: number;
   size: MapSize;
   islands: boolean;
-  /** custom map code (from the map editor), or "" */
+  /** premade map id (WORLD, EUROPE...), custom map code from the editor, or "" for a random map */
   map: string;
+  /** dominance countdown victory */
+  dominance: boolean;
 }
 
 export interface UnitInfo {
@@ -45,6 +47,8 @@ export interface MissileInfo {
   ty: number;
   total: number;
   left: number;
+  k: "atom" | "hydrogen" | "mirv";
+  radius: number;
 }
 
 export interface PlayerInfo {
@@ -88,6 +92,7 @@ export interface MeInfo {
   /** players who proposed an alliance to you */
   reqs: number[];
   canLaunch: boolean;
+  embargo: number[];
 }
 
 export interface LobbyMember {
@@ -111,7 +116,12 @@ export type ClientMsg =
   | { t: "wall"; pts: number[] }
   | { t: "train"; kind: UnitK }
   | { t: "move"; id: number; pts: number[]; ratio?: number }
-  | { t: "missile"; x: number; y: number }
+  | { t: "missile"; x: number; y: number; kind?: "atom" | "hydrogen" | "mirv" }
+  | { t: "rail"; pts: number[] }
+  | { t: "donate"; to: number; what: "troops" | "gold" }
+  | { t: "embargo"; with: number; on: boolean }
+  | { t: "chat"; id: number }
+  | { t: "clearskin"; id: number }
   | { t: "ally"; with: number }
   | { t: "unally"; with: number }
   | { t: "research"; id: string }
@@ -147,6 +157,7 @@ export type ServerMsg =
       sp: number;
       walls: [number, number][];
       units: UnitInfo[];
+      rails: number[];
     }
   | {
       t: "tick";
@@ -161,15 +172,21 @@ export type ServerMsg =
       caps?: [number, number][];
       u: UnitInfo[];
       w?: [number, number][];
+      /** rail tile changes: [tile, 0/1] */
+      rl?: [number, number][];
       ph: string;
       pt: number;
       me: MeInfo;
       ms: MissileInfo[];
+      /** dominance countdown: ticks left (0 = none) and the leading player's id */
+      dm: number;
+      dl: number;
       sk?: [number, string][];
     }
   | { t: "paused"; paused: boolean }
   | { t: "over"; winner: number; team: number }
   | { t: "saved" }
+  | { t: "chat"; from: number; id: number }
   | { t: "error"; msg: string };
 
 export function rle(owner: ArrayLike<number>): number[] {

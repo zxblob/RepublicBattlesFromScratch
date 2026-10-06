@@ -5,7 +5,7 @@ import type { ClientGame } from "./state";
 
 export interface Camera { x: number; y: number; zoom: number }
 
-const GLYPH: Record<StructType, string> = { bunker: "B", barracks: "K", bank: "$", radar: "R", tankfactory: "T", airbase: "A", sam: "S", port: "P", city: "C", farm: "F", lab: "L", silo: "M", spaceport: "★" };
+const GLYPH: Record<StructType, string> = { bunker: "B", barracks: "K", bank: "$", radar: "R", tankfactory: "T", airbase: "A", sam: "S", port: "P", city: "C", farm: "F", lab: "L", silo: "M", spaceport: "★", factory: "Y" };
 
 function mix(a: number, b: number, t: number): number {
   const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
@@ -95,6 +95,11 @@ export class Renderer {
     const x = i % g.w, y = (i / g.w) | 0;
     const n = ((x * 7 + y * 13) % 5) / 5;
     let base = t === Terrain.Water ? mix(0x16395c, 0x1d4a73, n) : t === Terrain.Mountain ? mix(0x77756d, 0x8a877d, n) : mix(0x4d7a4b, 0x5c8a55, n);
+    if (g.rails[i] && !g.walls.has(i)) {
+      const rp = g.players.get(g.owner[i]);
+      const bed = mix(0x6b5a3a, 0xc8b27a, ((x + y) & 1) * 0.5);
+      return rp ? mix(bed, rp.color, 0.15) : bed;
+    }
     if (g.walls.has(i)) {
       const hp = g.walls.get(i)!;
       const wp = g.players.get(g.owner[i]);
@@ -264,8 +269,8 @@ export class Renderer {
       if (u.k === "t") {
         ctx.fillRect(u.x - r, u.y - r * 0.7, r * 2, r * 1.4);
         ctx.strokeRect(u.x - r, u.y - r * 0.7, r * 2, r * 1.4);
-      } else if (u.k === "x" || u.k === "w") {
-        const w = u.k === "w" ? r * 1.5 : r * 1.2;
+      } else if (u.k === "x" || u.k === "w" || u.k === "r") {
+        const w = u.k === "w" ? r * 1.5 : u.k === "r" ? r * 0.8 : r * 1.2;
         ctx.beginPath();
         ctx.moveTo(u.x - w, u.y - r * 0.45);
         ctx.lineTo(u.x + w, u.y - r * 0.45);
@@ -288,6 +293,7 @@ export class Renderer {
       }
       ctx.fillStyle = "#fff";
       ctx.font = `bold ${r * 0.95}px sans-serif`;
+      if (u.k === "r") continue;
       const glyph = u.k === "t" ? "T" : u.k === "f" ? "F" : u.k === "w" ? "W" : u.k === "x" ? (u.cargo ? fmt(u.cargo / CFG.displayScale) : "x") : String(u.ammo);
       ctx.fillText(glyph, u.x, u.y + (u.k === "t" || u.k === "x" || u.k === "w" ? 0.05 : r * 0.25));
     }
@@ -306,7 +312,7 @@ export class Renderer {
       ctx.fillStyle = "#ff6b3d";
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(m.tx, m.ty, CFG.missileRadius, 0, Math.PI * 2);
+      ctx.arc(m.tx, m.ty, m.radius, 0, Math.PI * 2);
       ctx.strokeStyle = "rgba(255,80,60,0.45)";
       ctx.stroke();
     }
@@ -392,6 +398,24 @@ export class Renderer {
       ctx.strokeText(t, sx, sy + size * 0.5);
       ctx.fillText(t, sx, sy + size * 0.5);
     }
+    this.drawEmojis(ctx, now);
+  }
+
+  private drawEmojis(ctx: CanvasRenderingContext2D, now: number): void {
+    const g = this.g;
+    g.emojis = g.emojis.filter((e) => performance.now() - e.born < 4000);
+    for (const e of g.emojis) {
+      const p = g.players.get(e.id);
+      if (!p) continue;
+      const age = (performance.now() - e.born) / 4000;
+      const sx = this.cw / 2 + ((p.cap % g.w) + 0.5 - this.cam.x) * this.cam.zoom;
+      const sy = this.ch / 2 + (Math.floor(p.cap / g.w) - this.cam.y) * this.cam.zoom - 14 - age * 30;
+      ctx.globalAlpha = 1 - age * age;
+      ctx.font = "28px sans-serif";
+      ctx.fillText(e.text, sx, sy);
+    }
+    ctx.globalAlpha = 1;
+    void now;
   }
 
   private path(ctx: CanvasRenderingContext2D, pts: number[], close: boolean): void {

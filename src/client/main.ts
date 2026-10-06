@@ -1,4 +1,4 @@
-import { CFG, STRUCT_TYPES, StructType, TECH, TECH_IDS } from "../core/config";
+import { CFG, MISSILES, MissileKind, STRUCT_TYPES, StructType, TECH, TECH_IDS } from "../core/config";
 import type { GameSetup, ServerMsg, UnitK } from "../core/protocol";
 import { fmt } from "./format";
 import { Input } from "./input";
@@ -14,7 +14,9 @@ let drawMode = false;
 let buildType: StructType | null = null;
 let hoverBuildBtn: StructType | null = null;
 let started = false;
-let panel: "" | "dip" | "res" = "";
+let panel: "" | "dip" | "res" | "set" | "chat" = "";
+let toolLine: "" | "wall" | "rail" = "";
+let missileKind: MissileKind = "atom";
 
 const store = {
   get(k: string): string { try { return localStorage.getItem(k) ?? ""; } catch { return ""; } },
@@ -57,11 +59,13 @@ function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
     <div class="opt"><label>Mode</label>${seg("mode", [["ffa", "Free for all"], ["team", "Teams"], ["ww", "World War"], ["wow", "War of the Worlds"]], "ffa")}
       <small class="muted" id="${prefix}-mode-desc"></small></div>
     <div class="opt" id="${prefix}-teams-row"><label>Teams: <b id="${prefix}-teams-n">2</b></label><input id="${prefix}-teams" type="range" min="2" max="6" value="2"></div>
-    <div class="opt"><label>Map size</label>${seg("size", [["small", "Small"], ["medium", "Medium"], ["large", "Large"], ["huge", "Huge"]], "small")}
+    <div class="opt"><label>Map</label>${seg("pre", [["", "Random"], ["WORLD", "Earth"], ["EUROPE", "Europe"], ["NAMERICA", "N. America"], ["SAMERICA", "S. America"], ["AFRICA", "Africa"], ["ASIA", "Asia"], ["AUSTRALIA", "Oceania"]], "")}</div>
+    <div class="opt" id="${prefix}-size-row"><label>Random map size</label>${seg("size", [["small", "Small"], ["medium", "Medium"], ["large", "Large"], ["huge", "Huge"]], "small")}
       <small class="muted" id="${prefix}-size-desc"></small></div>
-    <div class="opt check"><input id="${prefix}-islands" type="checkbox"><label for="${prefix}-islands">Islands (needs ports and boats)</label></div>
+    <div class="opt check" id="${prefix}-islands-row"><input id="${prefix}-islands" type="checkbox"><label for="${prefix}-islands">Islands (needs ports and boats)</label></div>
     <div class="opt"><label>Rival nations: <b id="${prefix}-bots-n">10</b></label><input id="${prefix}-bots" type="range" min="0" max="20" value="10"></div>
-    <div class="opt"><label>Custom map code (from the map editor)</label><input id="${prefix}-map" maxlength="10" placeholder="optional" autocapitalize="characters"></div>`;
+    <div class="opt check"><input id="${prefix}-dom" type="checkbox" checked><label for="${prefix}-dom">Dominance victory (a clear leader wins after a 5 min countdown)</label></div>
+    <div class="opt"><label>Or a custom map code (from the map editor)</label><input id="${prefix}-map" maxlength="10" placeholder="optional" autocapitalize="characters"></div>`;
   const g = <T extends HTMLElement>(id: string) => root.querySelector<T>("#" + prefix + "-" + id)!;
   const MODE_DESC: Record<string, string> = {
     ffa: "Everyone for themselves. Alliances are possible.",
@@ -79,6 +83,9 @@ function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
     g("bots-n").textContent = g<HTMLInputElement>("bots").value;
     g("mode-desc").textContent = MODE_DESC[val("mode")];
     g("size-desc").textContent = SIZE_DESC[val("size")];
+    const premade = val("pre") !== "";
+    g("size-row").classList.toggle("hidden", premade);
+    g("islands-row").classList.toggle("hidden", premade);
     const max = { small: 20, medium: 30, large: 40, huge: 60 }[val("size") as "small"];
     const bots = g<HTMLInputElement>("bots");
     bots.max = String(max);
@@ -100,7 +107,8 @@ function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
     bots: Number(g<HTMLInputElement>("bots").value),
     size: val("size") as GameSetup["size"],
     islands: g<HTMLInputElement>("islands").checked,
-    map: g<HTMLInputElement>("map").value.trim().toUpperCase(),
+    map: g<HTMLInputElement>("map").value.trim().toUpperCase() || val("pre"),
+    dominance: g<HTMLInputElement>("dom").checked,
   });
 }
 const menuSetup = mountOptions($("menu-opts"), "mo");
@@ -173,20 +181,34 @@ $("cancel").onclick = () => { for (const a of game?.attacks ?? []) if (a.by === 
 $("btn-save").onclick = () => net.send({ t: "save" });
 $("btn-dip").onclick = () => togglePanel("dip");
 $("btn-res").onclick = () => togglePanel("res");
+$("btn-set").onclick = () => togglePanel("set");
+$("btn-chat").onclick = () => togglePanel("chat");
 $("panel-close").onclick = () => togglePanel("");
-$("wall").onclick = () => {
+function lineTool(kind: "wall" | "rail", hint: string): void {
+  const was = toolLine === kind;
   clearTools();
+  if (was) return;
+  toolLine = kind;
   ov.wallDraft = true;
-  $("wall").classList.add("on");
-  toast("Draw a line on your own land to build a wall");
-};
-$("missile").onclick = () => {
-  const on = !ov.missileAim;
-  clearTools();
-  ov.missileAim = on;
-  $("missile").classList.toggle("on", on);
-  if (on) toast("Tap the target for your missile");
-};
+  $(kind).classList.add("on");
+  toast(hint);
+}
+$("wall").onclick = () => lineTool("wall", "Draw a line on your own land to build a wall");
+$("rail").onclick = () => lineTool("rail", "Draw rails between Cities, Factories and Ports on your land");
+
+const missileBtns = new Map<MissileKind, HTMLButtonElement>();
+for (const k of Object.keys(MISSILES) as MissileKind[]) {
+  const b = document.createElement("button");
+  b.className = "hidden";
+  b.textContent = `🚀 ${MISSILES[k].label} · ${fmt(MISSILES[k].cost)}`;
+  b.onclick = () => {
+    const on = !(ov.missileAim && missileKind === k);
+    clearTools();
+    if (on) { ov.missileAim = true; missileKind = k; b.classList.add("on"); toast(`Tap the target for your ${MISSILES[k].label}`); }
+  };
+  missileBtns.set(k, b);
+  $("missiles").appendChild(b);
+}
 let launchArmed = 0;
 $("launch").onclick = () => {
   if (launchArmed && Date.now() - launchArmed < 3000) { launchArmed = 0; net.send({ t: "launch" }); return; }
@@ -199,8 +221,10 @@ function clearTools(): void {
   ov.missileAim = false;
   ov.selTank = 0;
   buildType = null;
+  toolLine = "";
   $("wall").classList.remove("on");
-  $("missile").classList.remove("on");
+  $("rail").classList.remove("on");
+  for (const b of missileBtns.values()) b.classList.remove("on");
   refreshBuilds();
 }
 
@@ -259,12 +283,21 @@ for (const u of UNITS) {
 }
 
 // panels
-function togglePanel(which: "" | "dip" | "res"): void {
+function togglePanel(which: "" | "dip" | "res" | "set" | "chat"): void {
   panel = panel === which ? "" : which;
   $("panel").classList.toggle("hidden", !panel);
   renderPanel(true);
 }
 let panelHtml = "";
+const CHAT = ["👍", "👎", "😂", "😡", "🤝", "🏳️", "🔥", "💀", "Let's ally!", "Thanks!", "Help me!", "Attack them!", "Peace?", "Good game", "Nukes incoming!", "Retreat!"];
+const QUALITY: [string, string][] = [["auto", "Auto"], ["high", "High"], ["medium", "Medium"], ["low", "Low"]];
+let quality = store.get("rb.quality") || "auto";
+let showPerf = store.get("rb.perf") === "1";
+function applyQuality(): void {
+  renderer.scale = quality === "high" ? 1 : quality === "medium" ? 0.75 : quality === "low" ? 0.5 : renderer.scale;
+  if (game) { renderer.resize(); forceDraw = true; }
+}
+
 function renderPanel(force = false): void {
   if (!panel || !game) return;
   let html = "";
@@ -273,13 +306,30 @@ function renderPanel(force = false): void {
     for (const [id, p] of game.players) {
       if (id === game.you || !game.stats.get(id)?.alive) continue;
       const me = game.me_;
-      let action = "";
-      if (game.mode === "team") action = p.team === game.players.get(game.you)?.team ? "<small>your team</small>" : "";
-      else if (me.allies.includes(id)) action = `<button data-unally="${id}">Break</button>`;
-      else if (me.reqs.includes(id)) action = `<button data-ally="${id}">Accept</button>`;
-      else action = `<button data-ally="${id}">Ally</button>`;
-      html += `<div class="prow"><div><i style="background:#${p.color.toString(16).padStart(6, "0")}"></i>${esc(p.name)}${p.team ? ` · team ${p.team}` : ""}<small>${fmt(game.stats.get(id)!.troops)} troops</small></div>${action}</div>`;
+      const friendly = game.friendly(id);
+      const acts: string[] = [];
+      if (game.mode === "team") { if (friendly) acts.push("<small>your team</small>"); }
+      else if (me.allies.includes(id)) acts.push(`<button data-unally="${id}">Break</button>`);
+      else if (me.reqs.includes(id)) acts.push(`<button data-ally="${id}">Accept</button>`);
+      else acts.push(`<button data-ally="${id}">Ally</button>`);
+      if (friendly) {
+        acts.push(`<button data-donate="${id}" data-what="troops">Give troops</button>`, `<button data-donate="${id}" data-what="gold">Give gold</button>`);
+      } else {
+        const on = me.embargo.includes(id);
+        acts.push(`<button data-embargo="${id}" data-on="${on ? 0 : 1}">${on ? "Lift embargo" : "Embargo"}</button>`);
+      }
+      if (isHost && p.skin) acts.push(`<button data-clearskin="${id}">Remove image</button>`);
+      html += `<div class="prow"><div><i style="background:#${p.color.toString(16).padStart(6, "0")}"></i>${esc(p.name)}${p.team ? ` · team ${p.team}` : ""}<small>${fmt(game.stats.get(id)!.troops)} troops</small></div><div class="acts">${acts.join("")}</div></div>`;
     }
+  } else if (panel === "chat") {
+    $("panel-title").textContent = "Quick chat";
+    html = `<div class="emoji-grid">${CHAT.map((c, i) => `<button data-chat="${i}" class="${i >= 8 ? "txt" : ""}">${esc(c)}</button>`).join("")}</div>`;
+  } else if (panel === "set") {
+    $("panel-title").textContent = "Settings";
+    html = `<div class="branch">Graphics quality</div><div class="seg">${QUALITY.map(([v, l]) => `<button data-q="${v}" class="${quality === v ? "on" : ""}">${l}</button>`).join("")}</div>
+      <p class="tag">Auto lowers the resolution if the game stutters. Low renders at half resolution and redraws less often.</p>
+      <div class="branch">Performance</div><button data-perf="1" class="${showPerf ? "on" : ""}">${showPerf ? "Hide" : "Show"} FPS and timings</button>
+      <p class="tag">If it still lags in an embedded browser, open the game in your normal browser.</p>`;
   } else {
     $("panel-title").textContent = `Research · ${game.me_.rp} points`;
     let branch = "";
@@ -299,9 +349,16 @@ function renderPanel(force = false): void {
   $("panel-body").innerHTML = html;
   for (const b of $("panel-body").querySelectorAll<HTMLButtonElement>("button")) {
     b.onclick = () => {
-      if (b.dataset.ally) net.send({ t: "ally", with: Number(b.dataset.ally) });
-      if (b.dataset.unally) net.send({ t: "unally", with: Number(b.dataset.unally) });
-      if (b.dataset.res) net.send({ t: "research", id: b.dataset.res });
+      const d = b.dataset;
+      if (d.ally) net.send({ t: "ally", with: Number(d.ally) });
+      if (d.unally) net.send({ t: "unally", with: Number(d.unally) });
+      if (d.res) net.send({ t: "research", id: d.res });
+      if (d.donate) net.send({ t: "donate", to: Number(d.donate), what: d.what === "gold" ? "gold" : "troops" });
+      if (d.embargo) net.send({ t: "embargo", with: Number(d.embargo), on: d.on === "1" });
+      if (d.clearskin) net.send({ t: "clearskin", id: Number(d.clearskin) });
+      if (d.chat) { net.send({ t: "chat", id: Number(d.chat) }); togglePanel(""); }
+      if (d.q) { quality = d.q; store.set("rb.quality", quality); applyQuality(); renderPanel(true); }
+      if (d.perf) { showPerf = !showPerf; store.set("rb.perf", showPerf ? "1" : "0"); renderPanel(true); }
     };
   }
 }
@@ -340,7 +397,7 @@ const input = new Input(canvas, renderer, {
   onLasso(poly, pressure) {
     if (!game || !game.me().alive) return;
     const rounded = poly.map((n) => Math.round(n * 100) / 100);
-    if (ov.wallDraft) { net.send({ t: "wall", pts: rounded }); clearTools(); return; }
+    if (ov.wallDraft) { net.send({ t: toolLine === "rail" ? "rail" : "wall", pts: rounded }); clearTools(); return; }
     if (ov.selTank) { net.send({ t: "move", id: ov.selTank, pts: rounded, ratio: Number(ratioEl.value) / 100 }); return; }
     if (poly.length < 6) return; // an attack area needs at least 3 points
     let ratio = Number(ratioEl.value) / 100;
@@ -352,9 +409,9 @@ const input = new Input(canvas, renderer, {
   onTap(wx, wy) {
     if (!game) return;
     if (game.sp > 0) { net.send({ t: "spawn", x: Math.floor(wx), y: Math.floor(wy) }); return; }
-    if (ov.missileAim) { net.send({ t: "missile", x: wx, y: wy }); clearTools(); return; }
+    if (ov.missileAim) { net.send({ t: "missile", x: wx, y: wy, kind: missileKind }); clearTools(); return; }
     // units: tap one of yours to select, tap elsewhere to send it there
-    const near = game.units.find((u) => u.owner === game!.you && Math.hypot(u.x - wx, u.y - wy) * renderer.cam.zoom < 22);
+    const near = game.units.find((u) => u.owner === game!.you && u.k !== "r" && Math.hypot(u.x - wx, u.y - wy) * renderer.cam.zoom < 22);
     if (near) {
       const id = ov.selTank === near.id ? 0 : near.id;
       clearTools();
@@ -383,7 +440,19 @@ function setHtml(el: HTMLElement, s: string): void {
   if (lastHtml.get(el) !== s) { lastHtml.set(el, s); el.innerHTML = s; }
 }
 
+function domText(g: ClientGame): string {
+  if (!g.dm) return "";
+  const s = Math.ceil(g.dm / 10);
+  return `${g.players.get(g.dl)?.name ?? "Leader"} wins in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 function phaseText(g: ClientGame): string {
+  const dom = domText(g);
+  const base = phaseBase(g);
+  return dom ? (base ? base + " · " : "") + dom : base;
+}
+
+function phaseBase(g: ClientGame): string {
   if (g.planet) return `${g.planet} planet`;
   if (!g.research) return "";
   if (g.phase === "expand") return "Expansion";
@@ -414,7 +483,7 @@ function hud(): void {
   $("phase").classList.toggle("hidden", !pt);
   setText($("phase-txt"), pt);
   UNITS.forEach((u, i) => trainBtns[i].classList.toggle("hidden", !game!.has(u.need)));
-  $("missile").classList.toggle("hidden", !game.has("silo"));
+  for (const b of missileBtns.values()) b.classList.toggle("hidden", !game.has("silo"));
   $("launch").classList.toggle("hidden", !game.me_.canLaunch);
   if (ov.selTank && !game.units.some((u) => u.id === ov.selTank)) ov.selTank = 0;
   const spawning = game.sp > 0;
@@ -434,10 +503,10 @@ let lastFrameAt = 0, frameEma = 16, slowFor = 0;
 function adapt(now: number): void {
   const d = now - lastFrameAt;
   lastFrameAt = now;
-  if (d <= 0 || d > 500) return; // tab was hidden
+  if (d <= 0 || d > 200) return; // throttled or hidden page (not a slow renderer): do not lower quality
   frameEma = frameEma * 0.92 + d * 0.08;
   slowFor = frameEma > 48 ? slowFor + 1 : 0;
-  if (slowFor > 45 && renderer.scale > 0.5) {
+  if (quality === "auto" && slowFor > 45 && renderer.scale > 0.5) {
     renderer.scale = Math.max(0.5, renderer.scale - 0.25);
     renderer.resize();
     forceDraw = true;
@@ -451,6 +520,7 @@ function frame(now: number): void {
   requestAnimationFrame(frame);
   if (!game) return;
   adapt(now);
+  perfFrames++;
   ov.lasso = input.lasso;
   ov.ghosts = ov.ghosts.filter((g) => now - g.born < 2200);
   // range ring: hovering the map while placing, hovering an own structure, or hovering a build button
@@ -466,18 +536,31 @@ function frame(now: number): void {
     const p = game.players.get(game.you);
     if (p) ov.ringAt = { x: p.cap % game.w, y: Math.floor(p.cap / game.w), r: CFG.structures[hoverBuildBtn].range };
   }
-  if (ov.missileAim && h) ov.ringAt = { x: hx, y: hy, r: CFG.missileRadius };
+  if (ov.missileAim && h) ov.ringAt = { x: hx, y: hy, r: MISSILES[missileKind].radius };
   // only redraw when something visible changed (idle ~10 fps on each server tick; 30+ fps while animating)
   const cam = renderer.cam;
   const sig = `${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.zoom.toFixed(3)},${renderer.cw},${renderer.ch}`;
   const ring = ov.ringAt ? `${ov.ringAt.x},${ov.ringAt.y},${ov.ringAt.r}` : "";
   const animating = input.lasso.length > 0 || ov.ghosts.length > 0 || game.missiles.length > 0 || game.attacks.some((a) => a.x !== undefined);
   const changed = sig !== lastSig || game.tick !== lastTick || ring !== lastRing || game.dirty.length > 0 || game.skinChanged.length > 0 || forceDraw;
-  if (changed || (animating && now - lastDraw > 45)) {
+  if (changed || (animating && now - lastDraw > (quality === "low" ? 70 : 45))) {
     lastSig = sig; lastTick = game.tick; lastRing = ring; lastDraw = now; forceDraw = false;
+    const t0 = performance.now();
     renderer.draw(now, ov);
+    perfDraws++;
+    perfDrawMs += performance.now() - t0;
   }
 }
+let perfFrames = 0, perfDraws = 0, perfDrawMs = 0, perfTicks = 0, perfAt = performance.now();
+setInterval(() => {
+  const el = $("perf");
+  el.classList.toggle("hidden", !showPerf || !game);
+  if (!showPerf || !game) return;
+  const dt = (performance.now() - perfAt) / 1000;
+  el.textContent = `fps ${(perfFrames / dt).toFixed(0)}  draws ${(perfDraws / dt).toFixed(0)}/s  draw ${(perfDrawMs / Math.max(1, perfDraws)).toFixed(1)}ms\nserver ${(perfTicks / dt).toFixed(1)} ticks/s  scale ${renderer.scale}  q:${quality}\nmap ${game.w}x${game.h}  structs ${game.structs.length}  units ${game.units.length}`;
+  perfFrames = perfDraws = perfDrawMs = perfTicks = 0;
+  perfAt = performance.now();
+}, 1000);
 let lastSig = "", lastRing = "", lastTick = -1, lastDraw = 0, forceDraw = true;
 requestAnimationFrame(frame);
 setInterval(hud, 250);
@@ -506,6 +589,7 @@ net.onmsg = (m: ServerMsg) => {
       game = new ClientGame(m);
       show("game"); // the canvas needs layout before the camera can fit the map
       renderer.attach(game);
+      applyQuality();
       const me = game.players.get(game.you);
       if (me && game.sp === 0) renderer.centerOn(me.cap, Math.max(renderer.cam.zoom, window.innerWidth < 700 ? 6 : 9));
       $("over").classList.add("hidden");
@@ -519,6 +603,7 @@ net.onmsg = (m: ServerMsg) => {
     }
     case "tick":
       if (game) {
+        perfTicks++;
         const was = game.sp;
         for (const e of game.applyTick(m)) toast(e);
         if (was > 0 && game.sp === 0) {
@@ -529,6 +614,16 @@ net.onmsg = (m: ServerMsg) => {
       break;
     case "paused":
       if (game) game.paused = m.paused;
+      break;
+    case "chat":
+      if (game) {
+        const p = game.players.get(m.from);
+        const text = CHAT[m.id] ?? "";
+        if (p && text) {
+          if (m.id < 8) game.emojis.push({ id: m.from, text, born: performance.now() });
+          else toast(`${p.name}: ${text}`);
+        }
+      }
       break;
     case "saved":
       toast("Game saved. Rejoin it later with the lobby code.");

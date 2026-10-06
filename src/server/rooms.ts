@@ -29,6 +29,8 @@ interface Client {
   attackBudget: number;
   ready: boolean;
   skin: string;
+  skinBanned?: boolean;
+  lastChat?: number;
 }
 
 interface SaveFile {
@@ -43,7 +45,7 @@ interface SaveFile {
 }
 
 export function defaultSetup(): GameSetup {
-  return { mode: "ffa", teams: 2, bots: 10, size: "small", islands: false, map: "" };
+  return { mode: "ffa", teams: 2, bots: 10, size: "small", islands: false, map: "", dominance: true };
 }
 
 function cleanSetup(s: Partial<GameSetup> | undefined): GameSetup {
@@ -57,6 +59,7 @@ function cleanSetup(s: Partial<GameSetup> | undefined): GameSetup {
     bots: Math.max(0, Math.min(MAX_BOTS[size], Math.floor(Number(o.bots)) || 0)),
     islands: !!o.islands,
     map: String(o.map ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10),
+    dominance: o.dominance !== false,
   };
 }
 
@@ -128,22 +131,24 @@ export class Room {
     const setup = cleanSetup(setupIn);
     const humans = [...this.clients.values()];
     let w: number, h: number, terrain: Uint8Array | undefined;
+    let names: string[] = BOT_NAMES;
     if (setup.map) {
       const m = await loadMap(setup.map);
-      if (!m) return "unknown custom map code";
+      if (!m) return "unknown map code";
       [w, h, terrain] = [m.map.w, m.map.h, m.terrain];
+      if (m.map.names?.length) names = m.map.names;
     } else [w, h] = MAP_SIZES[setup.size];
     if (humans.length + setup.bots < 2) return "need at least 2 players";
     if (this.game) return "already started";
     const seed = (Math.random() * 2 ** 31) | 0;
-    const game = new Game(seed, w, h, { mode: setup.mode, teams: setup.teams, islands: setup.islands, terrain });
+    const game = new Game(seed, w, h, { mode: setup.mode, teams: setup.teams, islands: setup.islands, terrain, dominance: setup.dominance });
     for (const c of humans) {
       const p = game.addPlayer(c.name, false);
       c.playerId = p.id;
       if (c.skin) p.skin = c.skin;
     }
     for (let i = 0; i < setup.bots; i++) {
-      game.addPlayer(BOT_NAMES[i % BOT_NAMES.length] + (i >= BOT_NAMES.length ? ` ${Math.floor(i / BOT_NAMES.length) + 1}` : ""), true);
+      game.addPlayer(names[i % names.length] + (i >= names.length ? ` ${Math.floor(i / names.length) + 1}` : ""), true);
     }
     try {
       game.spawnAll();
@@ -175,7 +180,7 @@ export class Room {
         id: p.id, name: p.name, color: p.color, isBot: p.isBot, cap: p.capital, team: p.team, skin: p.skin,
       })),
       terrain: rle(g.terrain), owners: rle(g.owner), structs: this.structInfos(), tick: g.tickNo, paused: this.paused,
-      sp: g.spawnTicks, walls: this.wallList(), units: this.unitInfos(),
+      sp: g.spawnTicks, walls: this.wallList(), units: this.unitInfos(), rails: this.railList(),
     });
   }
 
@@ -183,6 +188,13 @@ export class Room {
     const g = this.game!;
     const out: [number, number][] = [];
     for (let i = 0; i < g.wall.length; i++) if (g.wall[i]) out.push([i, g.wall[i]]);
+    return out;
+  }
+
+  private railList(): number[] {
+    const g = this.game!;
+    const out: number[] = [];
+    for (let i = 0; i < g.rail.length; i++) if (g.rail[i]) out.push(i);
     return out;
   }
 
@@ -215,6 +227,7 @@ export class Room {
       }
       case "skin": {
         const d = String(msg.data ?? "");
+        if (c.skinBanned) return this.err(c, "the host removed your image");
         if (d.length > MAX_SKIN || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(d)) return this.err(c, "bad image");
         c.skin = d;
         if (g && pid) { g.players[pid].skin = d; g.skinDirty.push(pid); }
@@ -246,6 +259,24 @@ export class Room {
       case "cancel":
         if (g && pid) g.cancelAttack(pid, Number(msg.id));
         return;
+      case "chat": {
+        if (!g || !pid) return;
+        const now = Date.now();
+        if (now - (c.lastChat ?? 0) < 1200) return;
+        c.lastChat = now;
+        const id = Math.floor(Number(msg.id));
+        if (!(id >= 0 && id < 24)) return;
+        this.broadcast({ t: "chat", from: pid, id });
+        return;
+      }
+      case "clearskin": {
+        if (c.token !== this.hostToken || !g) return;
+        const target = [...this.clients.values()].find((x) => x.playerId === Number(msg.id));
+        if (target) { target.skin = ""; target.skinBanned = true; }
+        const pl = g.players[Number(msg.id)];
+        if (pl) { pl.skin = undefined; g.skinDirty.push(pl.id); }
+        return;
+      }
       case "launch":
         if (g && pid && !this.paused) this.enterPlanet(c);
         return;
@@ -263,7 +294,10 @@ export class Room {
       case "wall": if (Array.isArray(msg.pts)) r = g.buildWall(pid, msg.pts); break;
       case "train": r = g.trainUnit(pid, msg.kind); break;
       case "move": if (Array.isArray(msg.pts)) r = g.moveUnit(pid, Number(msg.id), msg.pts, Number(msg.ratio) || 0); break;
-      case "missile": r = g.launchMissile(pid, Number(msg.x), Number(msg.y)); break;
+      case "missile": r = g.launchMissile(pid, Number(msg.x), Number(msg.y), (["atom", "hydrogen", "mirv"] as const).includes(msg.kind as never) ? msg.kind! : "atom"); break;
+      case "rail": if (Array.isArray(msg.pts)) r = g.buildRail(pid, msg.pts); break;
+      case "donate": r = g.donate(pid, Number(msg.to), msg.what === "gold" ? "gold" : "troops"); break;
+      case "embargo": r = g.setEmbargo(pid, Number(msg.with), !!msg.on); break;
       case "ally": r = g.proposeAlliance(pid, Number(msg.with)); break;
       case "unally": r = g.breakAlliance(pid, Number(msg.with)); break;
       case "research": r = g.doResearch(pid, String(msg.id)); break;
@@ -335,7 +369,10 @@ export class Room {
     g.skinDirty = [];
     const structs = g.structDirty ? this.structInfos() : undefined;
     g.structDirty = false;
-    const ms = g.missiles.map((m) => ({ id: m.id, owner: m.owner, sx: m.sx, sy: m.sy, tx: m.tx, ty: m.ty, total: m.total, left: m.left }));
+    const ms = g.missiles.map((m) => ({ id: m.id, owner: m.owner, sx: m.sx, sy: m.sy, tx: m.tx, ty: m.ty, total: m.total, left: m.left, k: m.kind, radius: m.radius }));
+    const railTiles = [...new Set(g.railDirty)];
+    g.railDirty = [];
+    const rl: [number, number][] | undefined = railTiles.length ? railTiles.map((t) => [t, g.rail[t]] as [number, number]) : undefined;
     const ev = g.events.map((e) => {
       switch (e.k) {
         case "elim": return `${g.players[e.id].name} was eliminated${e.by ? " by " + g.players[e.by].name : ""}`;
@@ -368,10 +405,11 @@ export class Room {
         allies: me ? me.allies : [],
         reqs: c.playerId ? g.allyReq.get(c.playerId) ?? [] : [],
         canLaunch: c.playerId ? g.canLaunch(c.playerId) : false,
+        embargo: me ? me.embargo : [],
       };
       this.send(c, {
         t: "tick", n: g.tickNo, d, p, a, s: structs, ev: ev.length ? ev : undefined, sp: g.spawnTicks, caps, u, w,
-        ph: g.phase, pt: g.phaseTicks, me: meInfo, ms, sk,
+        ph: g.phase, pt: g.phaseTicks, me: meInfo, ms, sk, rl, dm: g.domTicks, dl: g.domLeader ? g.players.findIndex((p) => p && p.alive && (p.team ? 1000 + p.team : p.id) === g.domLeader) : 0,
       });
     }
     if (g.over) {

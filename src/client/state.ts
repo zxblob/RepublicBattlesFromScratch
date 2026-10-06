@@ -26,8 +26,14 @@ export class ClientGame {
   units: UnitInfo[] = [];
   missiles: MissileInfo[] = [];
   walls = new Map<number, number>();
+  rails = new Uint8Array(0);
+  /** dominance countdown ticks and leader id */
+  dm = 0;
+  dl = 0;
+  /** floating emoji above a nation: [player id, text, born ms] */
+  emojis: { id: number; text: string; born: number }[] = [];
   skins = new Map<number, Uint8ClampedArray>();
-  me_: MeInfo = { rp: 0, tech: [], allies: [], reqs: [], canLaunch: false };
+  me_: MeInfo = { rp: 0, tech: [], allies: [], reqs: [], canLaunch: false, embargo: [] };
   paused = false;
   over = false;
   winner = 0;
@@ -54,6 +60,8 @@ export class ClientGame {
     unrle(m.terrain, this.terrain);
     this.owner = new Uint16Array(m.w * m.h);
     unrle(m.owners, this.owner);
+    this.rails = new Uint8Array(m.w * m.h);
+    for (const t of m.rails) this.rails[t] = 1;
     for (const p of m.players) { this.players.set(p.id, p); if (p.skin) this.loadSkin(p.id, p.skin); }
     this.structs = m.structs;
     this.units = m.units;
@@ -101,6 +109,9 @@ export class ClientGame {
     this.phase = m.ph;
     this.pt = m.pt;
     this.me_ = m.me;
+    this.dm = m.dm;
+    this.dl = m.dl;
+    if (m.rl) for (const [t, v] of m.rl) { this.rails[t] = v; this.dirty.push(t); }
     if (m.sk) for (const [id, data] of m.sk) { const p = this.players.get(id); if (p) p.skin = data; this.loadSkin(id, data); }
     if (m.w) for (const [t, hp] of m.w) { if (hp > 0) this.walls.set(t, hp); else this.walls.delete(t); this.dirty.push(t); }
     this.sp = m.sp;

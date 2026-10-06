@@ -56,10 +56,12 @@
     <div class="stat"><span>Gold</span><b id="s-gold">0</b></div>
     <div class="stat"><span>Land</span><b id="s-land">0%</b></div>
     <div id="phase" class="stat hidden"><span>Phase</span><b id="phase-txt"></b></div>
+    <button id="btn-chat" class="icon" title="Quick chat">💬</button>
     <button id="btn-dip" class="icon" title="Diplomacy">🤝</button>
     <button id="btn-res" class="icon hidden" title="Research">🔬</button>
     <button id="btn-save" class="icon hidden" title="Save game (host)">💾</button>
     <button id="pause" class="icon hidden" title="Pause (host)">⏸</button>
+    <button id="btn-set" class="icon" title="Settings and performance">⚙</button>
     <button id="quit" class="icon" title="Leave game">✕</button>
   </div>
   <ol id="board"></ol>
@@ -88,7 +90,8 @@
       <div id="builds"></div>
       <button id="wall" title="Draw a wall line on your land">▬ Wall</button>
       <span id="trains"></span>
-      <button id="missile" class="hidden" title="Launch a missile: tap a target">🚀 Missile</button>
+      <button id="rail" title="Draw rails to link Cities, Factories and Ports for income">⌇ Rail</button>
+      <span id="missiles"></span>
       <button id="launch" class="hidden" title="Launch to the planets">🚀 Launch to space</button>
       <button id="cancel" class="hidden">Cancel attacks</button>
       <button id="home" title="Centre on capital">⌖</button>
@@ -104,6 +107,7 @@
   </div>
 </div>
 <div id="offline" class="hidden">Reconnecting…</div>
+<div id="perf" class="hidden"></div>
 <script type="module" src="main.js"></script>
 </body>
 </html>

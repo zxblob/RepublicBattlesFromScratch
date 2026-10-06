@@ -31,6 +31,10 @@ Written from scratch (TypeScript, Node, WebSocket, Canvas). MIT licensed.
 - **Buildings:** Bunker, Barracks, Bank, Radar, Port, City, Farm, Research Lab, SAM Launcher, Missile Silo, Tank Factory, Airbase, Spaceport, plus drawable Walls.
 - **Units:** tanks, fighters, bombers, transports (land troops from the sea) and warships. **Missiles** from silos can be shot down by SAMs.
 - **Research:** Economy, Military, Defence (and Space) branches, per player, permanent for the match.
+- **Premade maps:** Earth, Europe, North America, South America, Africa, Asia and Oceania, rasterised from Natural Earth (public domain) coastlines; bots are named after countries. Mountains are synthetic. Regenerate with `node scripts/make-maps.mjs ne_50m_land.geojson`.
+- **Nukes:** Atom bomb, Hydrogen bomb (big radius) and MIRV (six warheads), launched from silos, interceptable by SAMs.
+- **Economy extras:** Factories, drawable Rails that link Cities/Factories/Ports for income, automatic Trade Ships between ports (embargo-able), donating troops or gold to allies, quick chat and emoji pings.
+- **Victory timers:** a clear leader triggers a 5-minute dominance countdown (lobby option); every game has a 2-hour limit.
 - **Maps:** small to huge (1024×640) procedural maps, an Islands option, and custom maps from the in-browser **map editor** (`/editor.html`, Pencil supported). Publish to get a code, enter it when starting a game.
 - **Country image:** upload a picture that is tiled over your land.
 - **Save games:** the server saves running games to `data/saves` (autosave, host's 💾 button, and on shutdown). After a restart a saved game comes back **paused** under the same lobby code; players reconnect and the host presses play.
@@ -81,4 +85,4 @@ that prefix to the server and strip it.
 - `src/core` deterministic simulation (map, combat, bots, structures), shared by server and client
 - `src/server` HTTP + WebSocket rooms, 10 ticks/s, authoritative
 - `src/client` canvas renderer, pointer/pen input, UI
-- Known limits: bots don't use tanks, aircraft or missiles; no fog of war; huge maps send every change to every player (fine for LAN-size groups).
+- Known limits: no fog of war; huge maps send every change to every player (fine for LAN-size groups).

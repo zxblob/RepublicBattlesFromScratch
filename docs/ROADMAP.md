@@ -60,3 +60,9 @@ Cold War + research, War of the Worlds (space race, planets), save games + resta
 country image.
 Follow-ups: bots using tanks/air/missiles, fog of war (rejected for now), interest management for very large maps,
 image moderation tools, a stalemate breaker for two equal powers.
+
+## Round 3 (done)
+Premade real-world maps, nukes (atom/hydrogen/MIRV), factory + rails + trade ships, embargo/donate, quick chat,
+dominance countdown + time limit, bots use tanks/aircraft/missiles, host can remove a country image,
+settings panel with quality + FPS overlay.
+Still open: fog of war (declined), area-based update filtering for huge maps, real sprites, real-device testing.

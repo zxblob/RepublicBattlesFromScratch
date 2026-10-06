@@ -1,9 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { Terrain } from "../core/mapgen";
 import { unrle } from "../core/protocol";
 
+const HERE = fileURLToPath(new URL(".", import.meta.url));
+export const PREMADE_DIR = resolve(process.env.PREMADE_DIR ?? join(HERE, "maps"));
 export const MAPS_DIR = resolve(process.env.MAPS_DIR ?? "data/maps");
 
 export interface StoredMap {
@@ -12,6 +15,8 @@ export interface StoredMap {
   h: number;
   /** run-length encoded terrain */
   rle: number[];
+  /** nation names used for bots on this map */
+  names?: string[];
 }
 
 /** Validates an uploaded map; returns the decoded terrain or an error. */
@@ -47,6 +52,16 @@ export async function saveMap(map: StoredMap): Promise<string> {
 
 export async function loadMap(code: string): Promise<{ terrain: Uint8Array; map: StoredMap } | null> {
   if (!/^[A-Z0-9]{4,10}$/.test(code)) return null;
+  try {
+    // premade real-world maps (bundled with the server) use their own size limits
+    const raw0 = await readFile(join(PREMADE_DIR, code + ".json"), "utf8").catch(() => "");
+    if (raw0) {
+      const m = JSON.parse(raw0) as StoredMap;
+      const terrain = new Uint8Array(m.w * m.h);
+      unrle(m.rle, terrain);
+      return { terrain, map: m };
+    }
+  } catch { /* fall through to user maps */ }
   try {
     const raw = JSON.parse(await readFile(join(MAPS_DIR, code + ".json"), "utf8"));
     const v = validateMap(raw);

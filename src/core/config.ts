@@ -54,6 +54,7 @@ export const CFG = {
     tankfactory: { cost: 150, range: 0, label: "Tank Factory", desc: "Lets you train tanks (max 3 per factory)", mult: 1 },
     airbase: { cost: 200, range: 0, label: "Airbase", desc: "Trains Fighters and Bombers (max 3 of each per base)", mult: 1 },
     sam: { cost: 180, range: 9, label: "SAM Launcher", desc: "Shoots down enemy aircraft in range", mult: 1 },
+    factory: { cost: 250, range: 0, label: "Factory", desc: "Gold income; link it to Cities and Ports with Rails", mult: 1 },
     port: { cost: 150, range: 0, label: "Port", desc: "Coastal gold income; trains boats", mult: 1 },
     city: { cost: 220, range: 0, label: "City", desc: "More troop capacity and gold", mult: 1 },
     farm: { cost: 120, range: 0, label: "Farm", desc: "Faster troop regeneration", mult: 1 },
@@ -64,12 +65,30 @@ export const CFG = {
   },
   structCostGrowth: 1.25,
 
-  // missiles
+  // missiles (kinds in MISSILES below)
   missileCost: 250,
   siloCooldown: 600,
   missileRadius: 3,
   missileTroopShare: 0.25,
   samIntercept: 0.7,
+
+  // factory, rails, trade
+  factoryGold: 0.1,
+  railTileCost: 1.5,
+  railGold: 0.08, // per link (node-1) per tick on a connected rail network
+  maxRailTilesPerDraw: 120,
+  tradeEvery: 600,
+  tradeBase: 0.6,
+  tradePerTile: 0.012,
+  maxTradeShips: 4,
+  tradeSpeed: 0.55,
+  tradeHp: 40,
+
+  // victory timers
+  domShare: 0.35,
+  domRatio: 1.5,
+  domTicks: 3000,
+  maxTicks: 72000,
 
   // World War modes
   coldShare: 0.7,
@@ -148,3 +167,10 @@ export const TECH = {
 } as const;
 export type TechId = keyof typeof TECH;
 export const TECH_IDS = Object.keys(TECH) as TechId[];
+
+export const MISSILES = {
+  atom: { label: "Atom bomb", cost: 250, radius: 3, share: 0.25, cd: 600 },
+  hydrogen: { label: "Hydrogen bomb", cost: 700, radius: 6, share: 0.45, cd: 1500 },
+  mirv: { label: "MIRV", cost: 1400, radius: 3, share: 0.25, cd: 2400 },
+} as const;
+export type MissileKind = keyof typeof MISSILES;

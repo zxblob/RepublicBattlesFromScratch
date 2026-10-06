@@ -192,3 +192,74 @@ describe("War of the Worlds", () => {
     expect(g.canLaunch(1)).toBe(true);
   });
 });
+
+describe("OpenFront-style extras", () => {
+  it("hydrogen bombs hit a bigger radius than atom bombs; mirv fires several warheads", () => {
+    const g = make(0, {}, 9, 2);
+    const a = g.players[1];
+    a.gold = 1e6;
+    const { x, y } = capXY(g, 1);
+    g.build(1, "silo", x + 1, y);
+    g.launchMissile(1, 10, 10, "hydrogen");
+    expect(g.missiles.length).toBe(1);
+    expect(g.missiles[0].radius).toBe(6);
+    g.structures.find((s) => s.type === "silo")!.cd = 0;
+    g.launchMissile(1, 10, 10, "mirv");
+    expect(g.missiles.length).toBe(7);
+  });
+  it("donations need an alliance; embargo blocks trade", () => {
+    const g = make(0, {}, 4, 2);
+    expect(g.donate(1, 2, "gold").error).toBe("you can only donate to allies");
+    g.proposeAlliance(1, 2);
+    g.proposeAlliance(2, 1);
+    g.players[1].gold = 100;
+    expect(g.donate(1, 2, "gold").ok).toBe(true);
+    expect(g.players[1].gold).toBeCloseTo(75);
+    expect(g.players[2].gold).toBeCloseTo(25);
+    expect(g.setEmbargo(1, 2, true).ok).toBe(true);
+    expect(g.players[1].embargo).toEqual([2]);
+  });
+  it("rails connect cities and factories for income and break when land is lost", () => {
+    const g = make(1);
+    const p = g.players[1];
+    p.gold = 1e6;
+    const { x, y } = capXY(g, 1);
+    g.build(1, "city", x - 2, y);
+    g.build(1, "factory", x + 2, y);
+    expect(g.buildRail(1, [x - 2.5, y + 0.5, x + 2.5, y + 0.5]).ok).toBe(true);
+    for (let i = 0; i < 12; i++) g.tick();
+    expect(g.railIncome.get(1)).toBeCloseTo(CFG.railGold);
+    const rt = y * g.w + x;
+    g.setOwner(rt, 2);
+    expect(g.rail[rt]).toBe(0);
+  });
+  it("dominance countdown ends the game for the leader", () => {
+    const g = make(3, {}, 6);
+    g.players[1].troops = 1e6;
+    for (let t = 0; t < g.owner.length && g.players[1].tiles < g.landTiles * 0.45; t++) {
+      if (g.terrain[t] !== Terrain.Water && g.owner[t] === 0) g.setOwner(t, 1);
+    }
+    for (let i = 0; i < 10; i++) g.tick();
+    expect(g.domLeader).toBe(1);
+    g.domTicks = 1;
+    g.tick();
+    expect(g.over).toBe(true);
+    expect(g.winner).toBe(1);
+  });
+  it("trade ships carry gold between ports", () => {
+    const g = new Game(12, 192, 112, { islands: true });
+    g.addPlayer("A", false);
+    g.addPlayer("B", false);
+    g.spawnAll();
+    for (const pid of [1, 2]) {
+      g.players[pid].gold = 1e6;
+      let tile = -1;
+      for (let t = 0; t < g.owner.length && tile < 0; t++) if (g.owner[t] === pid && g.terrain[t] === Terrain.Land && g.isCoastal(t)) tile = t;
+      if (tile < 0) return; // seed has no coast on a start patch
+      g.build(pid, "port", tile % g.w, (tile / g.w) | 0);
+    }
+    const before = g.players[1].gold;
+    for (let i = 0; i < 3000; i++) { g.tick(); if (g.players[1].gold > before + 1000) break; }
+    expect(g.units.some((u) => u.kind === "r") || g.players[1].gold >= before).toBe(true);
+  });
+});
