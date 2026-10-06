@@ -54,9 +54,48 @@ export const CFG = {
     tankfactory: { cost: 150, range: 0, label: "Tank Factory", desc: "Lets you train tanks (max 3 per factory)", mult: 1 },
     airbase: { cost: 200, range: 0, label: "Airbase", desc: "Trains Fighters and Bombers (max 3 of each per base)", mult: 1 },
     sam: { cost: 180, range: 9, label: "SAM Launcher", desc: "Shoots down enemy aircraft in range", mult: 1 },
+    port: { cost: 150, range: 0, label: "Port", desc: "Coastal gold income; trains boats", mult: 1 },
+    city: { cost: 220, range: 0, label: "City", desc: "More troop capacity and gold", mult: 1 },
+    farm: { cost: 120, range: 0, label: "Farm", desc: "Faster troop regeneration", mult: 1 },
+    lab: { cost: 200, range: 0, label: "Research Lab", desc: "Research points (World War modes)", mult: 1 },
+    silo: { cost: 400, range: 0, label: "Missile Silo", desc: "Launch missiles at any tile", mult: 1 },
+    spaceport: { cost: 800, range: 0, label: "Spaceport", desc: "Launch to the planets (War of the Worlds)", mult: 1 },
     radar: { cost: 120, range: 14, label: "Radar", desc: "Reveals enemy attack fronts and troop counts", mult: 1 },
   },
   structCostGrowth: 1.25,
+
+  // missiles
+  missileCost: 250,
+  siloCooldown: 600,
+  missileRadius: 3,
+  missileTroopShare: 0.25,
+  samIntercept: 0.7,
+
+  // World War modes
+  coldShare: 0.7,
+  coldHold: 30, // checks of 10 ticks (30 s)
+  coldTicks: 3000, // 5 minutes
+  spaceShare: 0.55,
+
+  // naval
+  transportCost: 40,
+  warshipCost: 120,
+  boatsPerPort: 3,
+  transportSpeed: 0.5,
+  warshipSpeed: 0.45,
+  transportHp: 50,
+  warshipHp: 150,
+  warshipDmg: 4,
+  warshipRange: 3.5,
+  landingRadius: 3,
+
+  // economy buildings
+  cityCap: 25,
+  cityGold: 0.04,
+  farmRegen: 0.08,
+  portGold: 0.12,
+  labRp: 0.05,
+  rpPerTile: 0.0004,
 
   // tanks and walls
   tankCost: 60,
@@ -91,3 +130,21 @@ export const CFG = {
 
 export type StructType = keyof typeof CFG.structures;
 export const STRUCT_TYPES = Object.keys(CFG.structures) as StructType[];
+
+/** Research tree for World War modes. Costs are research points. */
+export const TECH = {
+  econ1: { branch: "Economy", label: "Trade routes", cost: 80, req: "", desc: "+15% gold" },
+  econ2: { branch: "Economy", label: "Banking", cost: 200, req: "econ1", desc: "+25% gold, banks pay double" },
+  econ3: { branch: "Economy", label: "Megacities", cost: 400, req: "econ2", desc: "+25% max troops" },
+  mil1: { branch: "Military", label: "Conscription", cost: 80, req: "", desc: "+20% max troops" },
+  mil2: { branch: "Military", label: "Combined arms", cost: 200, req: "mil1", desc: "Your attacks cost 10% less" },
+  mil3: { branch: "Military", label: "Blitz doctrine", cost: 400, req: "mil2", desc: "+25% troop regeneration" },
+  def1: { branch: "Defence", label: "Fortification", cost: 80, req: "", desc: "Your land costs 15% more to take" },
+  def2: { branch: "Defence", label: "Deep bunkers", cost: 200, req: "def1", desc: "Bunkers are much stronger" },
+  def3: { branch: "Defence", label: "Air defence", cost: 400, req: "def2", desc: "SAMs deal 60% more damage" },
+  space1: { branch: "Space", label: "Rocketry", cost: 600, req: "mil3", desc: "Unlocks the Spaceport" },
+  space2: { branch: "Space", label: "Orbital lasers", cost: 900, req: "space1", desc: "On planets: your attacks cost 20% less" },
+  space3: { branch: "Space", label: "Planetary shields", cost: 900, req: "space1", desc: "On planets: your land costs 30% more to take" },
+} as const;
+export type TechId = keyof typeof TECH;
+export const TECH_IDS = Object.keys(TECH) as TechId[];

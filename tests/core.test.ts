@@ -184,7 +184,7 @@ describe("tanks and walls", () => {
     expect(g.trainUnit(1, "t").error).toBe("build a Tank Factory first");
     expect(g.build(1, "tankfactory", cx + 1, cy).ok).toBe(true);
     for (let i = 0; i < 3; i++) expect(g.trainUnit(1, "t").ok).toBe(true);
-    expect(g.trainUnit(1, "t").error).toBe("tank limit reached");
+    expect(g.trainUnit(1, "t").error).toBe("unit limit reached");
   });
   it("tanks make nearby attacks cheaper and stop at water", () => {
     const g = makeGame(2);
@@ -213,7 +213,7 @@ describe("aircraft and SAMs", () => {
     expect(g.trainUnit(1, "f").error).toBe("build an Airbase first");
     expect(g.build(1, "airbase", cx + 1, cy).ok).toBe(true);
     for (let i = 0; i < CFG.planesPerBase; i++) expect(g.trainUnit(1, "f").ok).toBe(true);
-    expect(g.trainUnit(1, "f").error).toBe("aircraft limit reached");
+    expect(g.trainUnit(1, "f").error).toBe("unit limit reached");
     expect(g.trainUnit(1, "b").ok).toBe(true);
   });
   it("aircraft fly over water and mountains", () => {

@@ -1,4 +1,4 @@
-import { CFG, StructType } from "./config";
+import { CFG, StructType, TECH, TechId } from "./config";
 import { rasterizePolygon } from "./geometry";
 import { generateMap, Terrain } from "./mapgen";
 import { mulberry32, Rng } from "./rng";
@@ -16,6 +16,24 @@ export interface Player {
   capital: number; // tile index or -1
   nextAggression: number;
   aggression: number; // bot personality 0.6..1.4
+  team: number; // 0 = none
+  allies: number[];
+  rp: number;
+  tech: string[];
+  skin?: string;
+  nextBoat?: number;
+}
+
+export type GameMode = "ffa" | "team" | "ww" | "wow";
+export type Phase = "play" | "expand" | "cold" | "war" | "space";
+
+export interface GameOptions {
+  mode?: GameMode;
+  teams?: number;
+  terrain?: Uint8Array;
+  islands?: boolean;
+  /** planets: set by the War of the Worlds transition */
+  planet?: string;
 }
 
 export interface Structure {
@@ -25,9 +43,11 @@ export interface Structure {
   tile: number;
   x: number;
   y: number;
+  /** silo cooldown ticks */
+  cd?: number;
 }
 
-export type UnitKind = "t" | "f" | "b"; // tank, fighter, bomber
+export type UnitKind = "t" | "f" | "b" | "x" | "w"; // tank, fighter, bomber, transport, warship
 
 export interface Unit {
   id: number;
@@ -35,6 +55,8 @@ export interface Unit {
   owner: number;
   ammo: number;
   cd: number;
+  /** troops carried by a transport */
+  cargo: number;
   x: number;
   y: number;
   hp: number;
@@ -53,11 +75,23 @@ export interface Attack {
   cy: number;
 }
 
+export interface Missile {
+  id: number;
+  owner: number;
+  sx: number;
+  sy: number;
+  tx: number;
+  ty: number;
+  total: number;
+  left: number;
+}
+
 export type GameEvent =
   | { k: "attack"; id: number; by: number; on: number }
   | { k: "attackEnd"; id: number; by: number }
   | { k: "elim"; id: number; by: number }
-  | { k: "win"; id: number };
+  | { k: "win"; id: number }
+  | { k: "text"; text: string };
 
 export interface Result<T = {}> {
   ok: boolean;
@@ -87,8 +121,19 @@ export class Game {
   readonly units: Unit[] = [];
   /** wall hit points per tile; 0 = no wall. Walls cannot be conquered until broken. */
   readonly wall: Uint8Array;
+  readonly missiles: Missile[] = [];
   readonly rng: Rng;
   readonly landTiles: number;
+  readonly mode: GameMode;
+  readonly teams: number;
+  readonly planet: string;
+  readonly research: boolean;
+  /** pending alliance proposals: target -> proposers */
+  allyReq = new Map<number, number[]>();
+  phase: Phase = "play";
+  phaseTicks = 0;
+  private hold = 0;
+  winnerTeam = 0;
 
   tickNo = 0;
   /** while > 0 the match is in the spawn-selection phase: no economy, no attacks, players may move their start */
@@ -106,13 +151,19 @@ export class Game {
   private nextAttackId = 1;
   private nextStructId = 1;
   private nextUnitId = 1;
+  private nextMissileId = 1;
 
-  constructor(seed: number, w = 192, h = 112) {
+  constructor(seed: number, w = 192, h = 112, opts: GameOptions = {}) {
     this.seed = seed;
     this.w = w;
     this.h = h;
+    this.mode = opts.mode ?? "ffa";
+    this.teams = this.mode === "team" ? Math.max(2, Math.min(6, opts.teams ?? 2)) : 0;
+    this.planet = opts.planet ?? "";
+    this.research = this.mode === "ww" || this.mode === "wow";
+    this.phase = this.research ? "expand" : "play";
     this.rng = mulberry32(seed ^ 0xabcdef);
-    this.terrain = generateMap(seed, w, h);
+    this.terrain = opts.terrain ?? generateMap(seed, w, h, opts.islands ? 0.4 : this.planet === "volcanic" ? 0.55 : 0.5, !!opts.islands);
     this.owner = new Uint16Array(w * h);
     this.wall = new Uint8Array(w * h);
     let land = 0;
@@ -134,9 +185,88 @@ export class Game {
       capital: -1,
       nextAggression: 0,
       aggression: 0.6 + this.rng() * 0.8,
+      team: 0,
+      allies: [],
+      rp: 0,
+      tech: [],
     };
+    if (this.teams) {
+      p.team = ((id - 1) % this.teams) + 1;
+      const idx = Math.floor((id - 1) / this.teams);
+      p.color = hslToRgb(((p.team - 1) * 360) / this.teams + 10, 0.72, Math.min(0.7, 0.38 + idx * 0.07));
+    }
     this.players.push(p);
     return p;
+  }
+
+  // ---- diplomacy ------------------------------------------------------------------------------
+
+  friendly(a: number, b: number): boolean {
+    if (a === b) return true;
+    const pa = this.players[a], pb = this.players[b];
+    if (!pa || !pb) return false;
+    return (pa.team !== 0 && pa.team === pb.team) || pa.allies.includes(b);
+  }
+
+  proposeAlliance(a: number, b: number): Result<{ formed: boolean }> {
+    const pa = this.players[a], pb = this.players[b];
+    if (!pa || !pb || a === b || !pa.alive || !pb.alive) return { ok: false, error: "no such nation" };
+    if (this.mode === "team") return { ok: false, error: "teams are fixed in team mode" };
+    if (this.friendly(a, b)) return { ok: false, error: "already allied" };
+    const mine = this.allyReq.get(a) ?? [];
+    if (mine.includes(b)) {
+      this.allyReq.set(a, mine.filter((x) => x !== b));
+      pa.allies.push(b);
+      pb.allies.push(a);
+      this.events.push({ k: "text", text: `${pa.name} and ${pb.name} are now allies` });
+      return { ok: true, data: { formed: true } };
+    }
+    if (pb.isBot) {
+      if (pb.aggression < 1.0 || this.rng() < 0.25) {
+        pa.allies.push(b);
+        pb.allies.push(a);
+        this.events.push({ k: "text", text: `${pa.name} and ${pb.name} are now allies` });
+        return { ok: true, data: { formed: true } };
+      }
+      return { ok: false, error: `${pb.name} declined` };
+    }
+    const reqs = this.allyReq.get(b) ?? [];
+    if (!reqs.includes(a)) reqs.push(a);
+    this.allyReq.set(b, reqs);
+    this.events.push({ k: "text", text: `${pa.name} proposes an alliance to ${pb.name}` });
+    return { ok: true, data: { formed: false } };
+  }
+
+  breakAlliance(a: number, b: number): Result {
+    const pa = this.players[a], pb = this.players[b];
+    if (!pa || !pb) return { ok: false, error: "no such nation" };
+    if (!pa.allies.includes(b)) return { ok: false, error: "not allied" };
+    pa.allies = pa.allies.filter((x) => x !== b);
+    pb.allies = pb.allies.filter((x) => x !== a);
+    this.events.push({ k: "text", text: `${pa.name} broke the alliance with ${pb.name}` });
+    return { ok: true };
+  }
+
+  // ---- research -------------------------------------------------------------------------------
+
+  has(p: Player, id: TechId): boolean {
+    return p.tech.includes(id);
+  }
+
+  doResearch(pid: number, id: string): Result {
+    const p = this.players[pid];
+    if (!p || !p.alive) return { ok: false, error: "not in game" };
+    if (!this.research) return { ok: false, error: "research is only in World War modes" };
+    const t = (TECH as Record<string, { cost: number; req: string }>)[id];
+    if (!t) return { ok: false, error: "unknown technology" };
+    if (this.phase === "expand") return { ok: false, error: "research opens in the Cold War" };
+    if (p.tech.includes(id)) return { ok: false, error: "already researched" };
+    if (id.startsWith("space") && this.mode !== "wow") return { ok: false, error: "needs War of the Worlds" };
+    if (t.req && !p.tech.includes(t.req)) return { ok: false, error: "needs " + (TECH as Record<string, { label: string }>)[t.req].label };
+    if (p.rp < t.cost) return { ok: false, error: "not enough research points" };
+    p.rp -= t.cost;
+    p.tech.push(id);
+    return { ok: true };
   }
 
   /** Place every added player on a well-separated patch of flat land. Call once after adding all players. */
@@ -228,8 +358,16 @@ export class Game {
     return true;
   }
 
+  ownedCount(pid: number, type: StructType): number {
+    let n = 0;
+    for (const s of this.structures) if (s.owner === pid && s.type === type) n++;
+    return n;
+  }
+
   maxTroops(p: Player): number {
-    return CFG.baseCap + p.tiles * CFG.capPerTile;
+    let mult = 1;
+    if (p.tech.length) mult += (this.has(p, "mil1") ? 0.2 : 0) + (this.has(p, "econ3") ? 0.25 : 0);
+    return (CFG.baseCap + p.tiles * CFG.capPerTile + this.ownedCount(p.id, "city") * CFG.cityCap) * mult;
   }
 
   structureCost(pid: number, type: StructType): number {
@@ -287,13 +425,20 @@ export class Game {
       const density = Math.max(d.troops / Math.max(d.tiles, 1), CFG.minDensity);
       const small = 1 + CFG.smallBonusMax * Math.max(0, Math.min(1, (CFG.smallTiles - d.tiles) / CFG.smallTiles));
       cost = density * small * CFG.playerCostMult * (t === Terrain.Mountain ? CFG.mountainMult : 1);
+      if (d.tech.length && this.has(d, "def1")) cost *= 1.15;
+      if (this.planet && this.has(d, "space3")) cost *= 1.3;
       if (d.capital >= 0) {
         const dx = (d.capital % this.w) - tx, dy = ((d.capital / this.w) | 0) - ty;
         if (dx * dx + dy * dy <= CFG.capitalRadius * CFG.capitalRadius) cost *= CFG.capitalMult;
       }
-      if (this.inRange(o, "bunker", tx, ty)) cost *= CFG.structures.bunker.mult;
+      if (this.inRange(o, "bunker", tx, ty)) cost *= this.has(d, "def2") ? 2.2 : CFG.structures.bunker.mult;
     }
     if (this.inRange(attacker, "barracks", tx, ty)) cost *= CFG.structures.barracks.mult;
+    const ap = this.players[attacker];
+    if (ap.tech.length) {
+      if (this.has(ap, "mil2")) cost *= 0.9;
+      if (this.planet && this.has(ap, "space2")) cost *= 0.8;
+    }
     for (const k of this.units) {
       if (k.owner !== attacker || k.kind !== "t") continue;
       const dx = k.x - tx, dy = k.y - ty;
@@ -318,23 +463,23 @@ export class Game {
     return this.launchAttackTiles(pid, rasterizePolygon(poly, this.w, this.h), ratio);
   }
 
-  launchAttackTiles(pid: number, rawTiles: number[], ratio: number): Result<{ id: number }> {
+  launchAttackTiles(pid: number, rawTiles: number[], ratio: number, poolOverride?: number): Result<{ id: number }> {
     const p = this.players[pid];
     if (!p || !p.alive || this.over) return { ok: false, error: "not in game" };
     if (this.spawnTicks > 0) return { ok: false, error: "choose your start first" };
     if (!Number.isFinite(ratio)) return { ok: false, error: "bad ratio" };
     ratio = Math.max(0.02, Math.min(1, ratio));
-    if (this.attacksOf(pid).length >= CFG.maxAttacksPerPlayer) return { ok: false, error: "too many attacks" };
+    if (poolOverride === undefined && this.attacksOf(pid).length >= CFG.maxAttacksPerPlayer) return { ok: false, error: "too many attacks" };
     const tiles = new Set<number>();
-    for (const t of rawTiles) if (this.terrain[t] !== Terrain.Water && this.owner[t] !== pid) tiles.add(t);
+    for (const t of rawTiles) if (this.terrain[t] !== Terrain.Water && !this.friendly(pid, this.owner[t])) tiles.add(t);
     if (tiles.size === 0) return { ok: false, error: "nothing to attack" };
     if (tiles.size > CFG.maxRegionTiles) return { ok: false, error: "area too large" };
     let touches = false;
     for (const t of tiles) if (this.touches(t, pid)) { touches = true; break; }
     if (!touches) return { ok: false, error: "area must touch your territory" };
-    const pool = p.troops * ratio;
+    const pool = poolOverride ?? p.troops * ratio;
     if (pool < 5) return { ok: false, error: "not enough troops" };
-    p.troops -= pool;
+    if (poolOverride === undefined) p.troops -= pool;
     const votes = new Map<number, number>();
     for (const t of tiles) {
       const o = this.owner[t];
@@ -395,7 +540,7 @@ export class Game {
     const frontier: number[] = [];
     let sx = 0, sy = 0;
     for (const t of a.tiles) {
-      if (this.owner[t] === a.by) { a.tiles.delete(t); continue; }
+      if (this.friendly(a.by, this.owner[t])) { a.tiles.delete(t); continue; }
       sx += t % this.w;
       sy += (t / this.w) | 0;
       if (!this.wall[t] && this.touches(t, a.by)) frontier.push(t);
@@ -440,6 +585,16 @@ export class Game {
     this.events.push({ k: "elim", id: p.id, by });
   }
 
+  isCoastal(tile: number): boolean {
+    const x = tile % this.w, y = (tile / this.w) | 0;
+    return (
+      (x > 0 && this.terrain[tile - 1] === Terrain.Water) ||
+      (x < this.w - 1 && this.terrain[tile + 1] === Terrain.Water) ||
+      (y > 0 && this.terrain[tile - this.w] === Terrain.Water) ||
+      (y < this.h - 1 && this.terrain[tile + this.w] === Terrain.Water)
+    );
+  }
+
   // ---- structures -----------------------------------------------------------------------------
 
   build(pid: number, type: StructType, x: number, y: number): Result<{ id: number }> {
@@ -454,6 +609,12 @@ export class Game {
     if (this.owner[tile] !== pid) return { ok: false, error: "must build on your land" };
     if (this.terrain[tile] !== Terrain.Land) return { ok: false, error: "needs flat land" };
     if (this.structAt.has(tile)) return { ok: false, error: "tile occupied" };
+    if (this.wall[tile]) return { ok: false, error: "tile occupied" };
+    if (type === "port" && !this.isCoastal(tile)) return { ok: false, error: "ports go on the coast" };
+    if (type === "lab" && !this.research) return { ok: false, error: "labs are for World War modes" };
+    if (type === "spaceport" && !(this.phase === "space" && this.has(p, "space1"))) {
+      return { ok: false, error: "spaceports need the Space phase and Rocketry" };
+    }
     const cost = this.structureCost(pid, type);
     if (p.gold < cost) return { ok: false, error: "not enough gold" };
     p.gold -= cost;
@@ -511,38 +672,108 @@ export class Game {
     const p = this.players[pid];
     if (!p || !p.alive || this.over) return { ok: false, error: "not in game" };
     if (this.spawnTicks > 0) return { ok: false, error: "choose your start first" };
-    const building = kind === "t" ? "tankfactory" : "airbase";
-    if (kind !== "t" && kind !== "f" && kind !== "b") return { ok: false, error: "unknown unit" };
+    if (!["t", "f", "b", "x", "w"].includes(kind)) return { ok: false, error: "unknown unit" };
+    const building = kind === "t" ? "tankfactory" : kind === "x" || kind === "w" ? "port" : "airbase";
     const bases = this.structures.filter((s) => s.owner === pid && s.type === building);
-    if (!bases.length) return { ok: false, error: kind === "t" ? "build a Tank Factory first" : "build an Airbase first" };
+    if (!bases.length) {
+      return { ok: false, error: kind === "t" ? "build a Tank Factory first" : building === "port" ? "build a Port first" : "build an Airbase first" };
+    }
     const mine = this.units.filter((k) => k.owner === pid && k.kind === kind).length;
-    const per = kind === "t" ? CFG.tanksPerFactory : CFG.planesPerBase;
-    if (mine >= bases.length * per) return { ok: false, error: kind === "t" ? "tank limit reached" : "aircraft limit reached" };
-    const cost = kind === "t" ? CFG.tankCost : kind === "f" ? CFG.fighterCost : CFG.bomberCost;
+    const per = kind === "t" ? CFG.tanksPerFactory : kind === "x" || kind === "w" ? CFG.boatsPerPort : CFG.planesPerBase;
+    if (mine >= bases.length * per) return { ok: false, error: "unit limit reached" };
+    const cost = { t: CFG.tankCost, f: CFG.fighterCost, b: CFG.bomberCost, x: CFG.transportCost, w: CFG.warshipCost }[kind];
     if (p.gold < cost) return { ok: false, error: "not enough gold" };
-    p.gold -= cost;
     const b = bases[mine % bases.length];
+    let sx = b.x + 0.5, sy = b.y + 0.5;
+    if (kind === "x" || kind === "w") {
+      let found = false;
+      for (let dy = -1; dy <= 1 && !found; dy++) {
+        for (let dx = -1; dx <= 1 && !found; dx++) {
+          const nx = b.x + dx, ny = b.y + dy;
+          if (nx < 0 || ny < 0 || nx >= this.w || ny >= this.h) continue;
+          if (this.terrain[ny * this.w + nx] === Terrain.Water) { sx = nx + 0.5; sy = ny + 0.5; found = true; }
+        }
+      }
+      if (!found) return { ok: false, error: "no open water next to the port" };
+    }
+    p.gold -= cost;
+    const hp = { t: CFG.tankHp, f: CFG.fighterHp, b: CFG.bomberHp, x: CFG.transportHp, w: CFG.warshipHp }[kind];
     const k: Unit = {
-      id: this.nextUnitId++, kind, owner: pid, x: b.x + 0.5, y: b.y + 0.5, path: [],
-      hp: kind === "t" ? CFG.tankHp : kind === "f" ? CFG.fighterHp : CFG.bomberHp,
-      ammo: kind === "b" ? CFG.bomberAmmo : 0, cd: 0,
+      id: this.nextUnitId++, kind, owner: pid, x: sx, y: sy, path: [], hp,
+      ammo: kind === "b" ? CFG.bomberAmmo : 0, cd: 0, cargo: 0,
     };
     this.units.push(k);
     return { ok: true, data: { id: k.id } };
   }
 
-  moveUnit(pid: number, id: number, pts: ArrayLike<number>): Result {
+  /** Move a unit along waypoints. Boats given a single destination get a water route; transports may load troops. */
+  moveUnit(pid: number, id: number, pts: ArrayLike<number>, ratio = 0): Result {
     const k = this.units.find((x) => x.id === id && x.owner === pid);
     if (!k) return { ok: false, error: "unit not found" };
     const n = Math.min((pts.length / 2) | 0, CFG.maxTankPathPoints);
-    const path: [number, number][] = [];
+    let path: [number, number][] = [];
     for (let i = 0; i < n; i++) {
       const x = pts[i * 2], y = pts[i * 2 + 1];
       if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, error: "bad path" };
       path.push([Math.max(0, Math.min(this.w - 0.01, x)), Math.max(0, Math.min(this.h - 0.01, y))]);
     }
+    if ((k.kind === "x" || k.kind === "w") && path.length) {
+      const dest = path[path.length - 1];
+      const route = this.waterRoute(k.x, k.y, dest[0], dest[1]);
+      if (!route) return { ok: false, error: "no sea route there" };
+      path = route;
+    }
+    if (k.kind === "x" && k.cargo === 0 && ratio > 0) {
+      const p = this.players[pid];
+      const load = p.troops * Math.max(0.05, Math.min(1, ratio));
+      if (load < 5) return { ok: false, error: "not enough troops to load" };
+      p.troops -= load;
+      k.cargo = load;
+    }
     k.path = path;
     return { ok: true };
+  }
+
+  /** BFS over water; returns decimated waypoints, or null. Destination may be on land next to water (nearest water used). */
+  waterRoute(x0: number, y0: number, x1: number, y1: number): [number, number][] | null {
+    const { w, h, terrain } = this;
+    const start = Math.floor(y0) * w + Math.floor(x0);
+    let goal = Math.floor(y1) * w + Math.floor(x1);
+    if (terrain[goal] !== Terrain.Water) {
+      // nearest water tile within 4 tiles of the target
+      let best = -1, bd = 1e9;
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+        const nx = Math.floor(x1) + dx, ny = Math.floor(y1) + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h || terrain[ny * w + nx] !== Terrain.Water) continue;
+        const d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = ny * w + nx; }
+      }
+      if (best < 0) return null;
+      goal = best;
+    }
+    if (terrain[start] !== Terrain.Water) return null;
+    const prev = new Map<number, number>([[start, -1]]);
+    const queue = [start];
+    let found = start === goal;
+    for (let qi = 0; qi < queue.length && !found && queue.length < 400000; qi++) {
+      const t = queue[qi];
+      const x = t % w, y = (t / w) | 0;
+      for (const n of [x > 0 ? t - 1 : -1, x < w - 1 ? t + 1 : -1, y > 0 ? t - w : -1, y < h - 1 ? t + w : -1]) {
+        if (n < 0 || prev.has(n) || terrain[n] !== Terrain.Water) continue;
+        prev.set(n, t);
+        if (n === goal) { found = true; break; }
+        queue.push(n);
+      }
+    }
+    if (!found) return null;
+    const tiles: number[] = [];
+    for (let t = goal; t !== -1; t = prev.get(t)!) tiles.push(t);
+    tiles.reverse();
+    // keep every 4th tile plus the end
+    const out: [number, number][] = [];
+    for (let i = 3; i < tiles.length; i += 4) out.push([(tiles[i] % w) + 0.5, ((tiles[i] / w) | 0) + 0.5]);
+    out.push([(goal % w) + 0.5, ((goal / w) | 0) + 0.5]);
+    return out.slice(0, 200);
   }
 
   /** exposed for tests */
@@ -551,42 +782,89 @@ export class Game {
   private stepUnits(): void {
     for (let i = this.units.length - 1; i >= 0; i--) {
       const k = this.units[i];
-      const air = k.kind !== "t";
-      const speed = k.kind === "t" ? CFG.tankSpeed : k.kind === "f" ? CFG.fighterSpeed : CFG.bomberSpeed;
+      const air = k.kind === "f" || k.kind === "b";
+      const speed = { t: CFG.tankSpeed, f: CFG.fighterSpeed, b: CFG.bomberSpeed, x: CFG.transportSpeed, w: CFG.warshipSpeed }[k.kind];
       const target = k.path[0];
+      let arrived = false;
       if (target) {
         const dx = target[0] - k.x, dy = target[1] - k.y;
         const dist = Math.hypot(dx, dy);
         const nx = dist <= speed ? target[0] : k.x + (dx / dist) * speed;
         const ny = dist <= speed ? target[1] : k.y + (dy / dist) * speed;
         const t = this.terrain[Math.floor(ny) * this.w + Math.floor(nx)];
-        if (!air && (t === Terrain.Water || t === Terrain.Mountain)) k.path = [];
+        const naval = k.kind === "x" || k.kind === "w";
+        if ((!air && !naval && (t === Terrain.Water || t === Terrain.Mountain)) || (naval && t !== Terrain.Water)) k.path = [];
         else {
           k.x = nx;
           k.y = ny;
-          if (dist <= speed) k.path.shift();
+          if (dist <= speed) { k.path.shift(); if (!k.path.length) arrived = true; }
         }
       }
       const tx = Math.floor(k.x), ty = Math.floor(k.y);
       if (k.kind === "t") this.tankActions(k, tx, ty, i);
       else if (k.kind === "b") this.bomberActions(k, tx, ty);
+      else if (k.kind === "x" && arrived && k.cargo > 0) this.land(k);
     }
-    // air combat: SAMs and fighters
+    // combat: SAMs, fighters, warships
     for (const k of this.units) {
-      if (k.kind === "t") continue;
-      for (const s of this.structures) {
-        if (s.type !== "sam" || s.owner === k.owner) continue;
-        const r = CFG.structures.sam.range;
-        if ((s.x + 0.5 - k.x) ** 2 + (s.y + 0.5 - k.y) ** 2 <= r * r) k.hp -= CFG.samDmg;
+      if (k.kind === "f" || k.kind === "b") {
+        for (const s of this.structures) {
+          if (s.type !== "sam" || this.friendly(s.owner, k.owner)) continue;
+          const r = CFG.structures.sam.range;
+          if ((s.x + 0.5 - k.x) ** 2 + (s.y + 0.5 - k.y) ** 2 <= r * r) {
+            const so = this.players[s.owner];
+            k.hp -= CFG.samDmg * (so.tech.length && this.has(so, "def3") ? 1.6 : 1);
+          }
+        }
       }
       if (k.kind === "f") {
         for (const q of this.units) {
-          if (q.kind === "t" || q.owner === k.owner) continue;
+          if (q.kind === "t" || this.friendly(q.owner, k.owner)) continue;
           if ((q.x - k.x) ** 2 + (q.y - k.y) ** 2 <= CFG.fighterRange ** 2) q.hp -= CFG.fighterDmg;
+        }
+      }
+      if (k.kind === "w") {
+        for (const q of this.units) {
+          if ((q.kind !== "x" && q.kind !== "w") || this.friendly(q.owner, k.owner)) continue;
+          if ((q.x - k.x) ** 2 + (q.y - k.y) ** 2 <= CFG.warshipRange ** 2) q.hp -= CFG.warshipDmg;
         }
       }
     }
     for (let i = this.units.length - 1; i >= 0; i--) if (this.units[i].hp <= 0) this.units.splice(i, 1);
+  }
+
+  /** A transport reached its destination: take a beachhead and push inland with the cargo. */
+  private land(k: Unit): void {
+    const cx = Math.floor(k.x), cy = Math.floor(k.y);
+    const R = CFG.landingRadius;
+    let best = -1, bd = 1e9;
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      const nx = cx + dx, ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= this.w || ny >= this.h) continue;
+      const t = ny * this.w + nx;
+      if (this.terrain[t] === Terrain.Water || this.wall[t]) continue;
+      const d = dx * dx + dy * dy;
+      if (d < bd) { bd = d; best = t; }
+    }
+    if (best < 0) return; // nothing to land on; stay and wait for new orders
+    const p = this.players[k.owner];
+    const idx = this.units.indexOf(k);
+    if (idx >= 0) this.units.splice(idx, 1);
+    let pool = k.cargo;
+    k.cargo = 0;
+    const o = this.owner[best];
+    if (this.friendly(k.owner, o)) { p.troops += pool; return; }
+    const cost = this.tileCost(k.owner, best);
+    if (pool < cost) { p.troops += pool; this.events.push({ k: "text", text: `${p.name}'s landing failed` }); return; }
+    pool -= cost;
+    if (o) {
+      const d = this.players[o];
+      d.troops -= Math.min(d.troops, (d.troops / Math.max(d.tiles, 1)) * CFG.defenderLossShare);
+    }
+    this.setOwner(best, k.owner);
+    if (o && this.players[o].tiles === 0) this.eliminate(this.players[o], k.owner);
+    const region = this.grow(best, (t) => !this.friendly(k.owner, this.owner[t]), 160);
+    if (pool < 5 || !this.launchAttackTiles(k.owner, region, 1, pool).ok) p.troops += pool;
   }
 
   private tankActions(k: Unit, tx: number, ty: number, idx: number): void {
@@ -663,44 +941,79 @@ export class Game {
     for (const a of [...this.attacks]) this.stepAttack(a);
     this.stepUnits();
 
-    const banks = new Map<number, number>();
-    for (const s of this.structures) if (s.type === "bank") banks.set(s.owner, (banks.get(s.owner) ?? 0) + 1);
-
+    this.stepMissiles();
+    const counts = new Map<number, Record<string, number>>();
+    for (const st of this.structures) {
+      const c = counts.get(st.owner) ?? {};
+      c[st.type] = (c[st.type] ?? 0) + 1;
+      counts.set(st.owner, c);
+    }
+    const researching = this.research && this.phase !== "expand";
     for (let id = 1; id < this.players.length; id++) {
       const p = this.players[id];
       if (!p.alive) continue;
+      const c = counts.get(id) ?? {};
       const cap = this.maxTroops(p);
       if (p.troops < cap) {
         let regen = CFG.regenBase + p.tiles * CFG.regenPerTile + CFG.regenGrowth * p.troops * (1 - p.troops / cap);
         if (p.tiles < CFG.lastStandTiles && p.capital >= 0) {
           regen += CFG.lastStandRegen * (1 - p.tiles / CFG.lastStandTiles);
         }
+        regen += (c.farm ?? 0) * CFG.farmRegen;
+        if (this.has(p, "mil3")) regen *= 1.25;
+        if (this.planet === "frozen") regen *= 0.6;
         p.troops = Math.min(cap, p.troops + regen);
       }
-      p.gold += CFG.goldBase + p.tiles * CFG.goldPerTile + (banks.get(id) ?? 0) * CFG.bankGold;
+      let gold = CFG.goldBase + p.tiles * CFG.goldPerTile + (c.bank ?? 0) * CFG.bankGold * (this.has(p, "econ2") ? 2 : 1);
+      gold += (c.port ?? 0) * CFG.portGold + (c.city ?? 0) * CFG.cityGold;
+      if (p.tech.length) gold *= 1 + (this.has(p, "econ1") ? 0.15 : 0) + (this.has(p, "econ2") ? 0.25 : 0);
+      if (this.planet === "desert") gold *= 0.6;
+      p.gold += gold;
+      if (researching) p.rp += p.tiles * CFG.rpPerTile + (c.lab ?? 0) * CFG.labRp;
       if (p.isBot && (this.tickNo + id) % 10 === 0) botThink(this, p);
     }
+    this.stepPhase();
     this.checkWin();
   }
 
+  /** Group id used for victory: team members win together, allies share a group. */
+  private groupOf(id: number): number {
+    const p = this.players[id];
+    return p.team ? 1000 + p.team : id;
+  }
+
   private checkWin(): void {
-    let alive = 0, last = 0, humansAlive = 0;
+    const alive: Player[] = [];
+    let humansAlive = 0;
     for (let id = 1; id < this.players.length; id++) {
       const p = this.players[id];
       if (!p.alive) continue;
-      alive++;
-      last = id;
+      alive.push(p);
       if (!p.isBot) humansAlive++;
-      if (p.tiles >= this.landTiles * 0.7) { this.finish(id); return; }
     }
-    if (alive <= 1) this.finish(last);
-    else if (humansAlive === 0 && this.players.some((p) => p && !p.isBot)) {
-      let top = 0;
-      for (let id = 1; id < this.players.length; id++) {
-        const p = this.players[id];
-        if (p.alive && (top === 0 || p.tiles > this.players[top].tiles)) top = id;
+    if (!alive.length) return this.finish(0);
+    // everyone left is on the same side (team or alliance)?
+    if (alive.every((x) => alive.every((y) => this.friendly(x.id, y.id)))) {
+      const top = alive.reduce((m, x) => (x.tiles > m.tiles ? x : m), alive[0]);
+      this.winnerTeam = top.team;
+      return this.finish(top.id);
+    }
+    if (this.phase === "cold") return;
+    const byGroup = new Map<number, number>();
+    for (const p of alive) byGroup.set(this.groupOf(p.id), (byGroup.get(this.groupOf(p.id)) ?? 0) + p.tiles);
+    const limit = this.mode === "wow" && this.phase === "war" ? 2 : 0.7; // wow: space race triggers first
+    if (limit === 0.7) {
+      for (const [g, tiles] of byGroup) {
+        if (tiles >= this.landTiles * 0.7) {
+          const top = alive.filter((x) => this.groupOf(x.id) === g).reduce((m, x) => (x.tiles > m.tiles ? x : m));
+          this.winnerTeam = top.team;
+          return this.finish(top.id);
+        }
       }
-      this.finish(top);
+    }
+    if (humansAlive === 0 && this.players.some((p) => p && !p.isBot)) {
+      const top = alive.reduce((m, x) => (x.tiles > m.tiles ? x : m), alive[0]);
+      this.finish(top.id);
     }
   }
 
@@ -708,6 +1021,126 @@ export class Game {
     this.over = true;
     this.winner = id;
     this.events.push({ k: "win", id });
+  }
+
+  /** World War / War of the Worlds phase machine. */
+  private stepPhase(): void {
+    if (!this.research || this.over) return;
+    const alive = this.players.filter((p) => p && p.alive);
+    if (this.phase === "expand" && this.tickNo % 10 === 0) {
+      const sorted = alive.map((p) => p.tiles).sort((a, b) => b - a);
+      let hit = alive.length <= 4;
+      for (let n = 3; n <= 6 && !hit; n++) {
+        if (alive.length > n && sorted.slice(0, n).reduce((a, b) => a + b, 0) >= this.landTiles * CFG.coldShare) hit = true;
+      }
+      this.hold = hit ? this.hold + 1 : 0;
+      if (this.hold >= CFG.coldHold) {
+        this.phase = "cold";
+        this.phaseTicks = CFG.coldTicks;
+        this.events.push({ k: "text", text: "The great powers stand off. Cold War begins: research now." });
+      }
+    } else if (this.phase === "cold") {
+      if (--this.phaseTicks <= 0) {
+        this.phase = "war";
+        this.events.push({ k: "text", text: "The Cold War is over. War resumes!" });
+      }
+    } else if (this.phase === "war" && this.mode === "wow" && this.tickNo % 10 === 0) {
+      const byGroup = new Map<number, number>();
+      for (const p of alive) byGroup.set(this.groupOf(p.id), (byGroup.get(this.groupOf(p.id)) ?? 0) + p.tiles);
+      for (const tiles of byGroup.values()) {
+        if (tiles >= this.landTiles * CFG.spaceShare) {
+          this.phase = "space";
+          this.events.push({ k: "text", text: "A superpower dominates Earth. The Space Race begins: research Rocketry, build a Spaceport." });
+          break;
+        }
+      }
+    }
+  }
+
+  /** Which group (team id or player id) can launch from here, if any. */
+  canLaunch(pid: number): boolean {
+    const p = this.players[pid];
+    return !!p && p.alive && this.mode === "wow" && this.phase === "space" && this.ownedCount(pid, "spaceport") > 0;
+  }
+
+  /** Members of the launching group that are still alive. */
+  launchGroup(pid: number): Player[] {
+    const g = this.groupOf(pid);
+    return this.players.filter((p) => p && p.alive && this.groupOf(p.id) === g);
+  }
+
+  // ---- missiles ---------------------------------------------------------------------------------
+
+  launchMissile(pid: number, x: number, y: number): Result {
+    const p = this.players[pid];
+    if (!p || !p.alive || this.over) return { ok: false, error: "not in game" };
+    if (this.spawnTicks > 0) return { ok: false, error: "choose your start first" };
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= this.w || y >= this.h) return { ok: false, error: "bad target" };
+    const silo = this.structures.find((s) => s.owner === pid && s.type === "silo" && (s.cd ?? 0) <= 0);
+    if (!this.ownedCount(pid, "silo")) return { ok: false, error: "build a Missile Silo first" };
+    if (!silo) return { ok: false, error: "silo is reloading" };
+    if (p.gold < CFG.missileCost) return { ok: false, error: "not enough gold" };
+    const tile = Math.floor(y) * this.w + Math.floor(x);
+    if (this.friendly(pid, this.owner[tile])) return { ok: false, error: "that is your side's land" };
+    p.gold -= CFG.missileCost;
+    silo.cd = CFG.siloCooldown;
+    const dist = Math.hypot(x - silo.x, y - silo.y);
+    const total = Math.round(30 + dist * 0.6);
+    this.missiles.push({ id: this.nextMissileId++, owner: pid, sx: silo.x + 0.5, sy: silo.y + 0.5, tx: x, ty: y, total, left: total });
+    return { ok: true };
+  }
+
+  private stepMissiles(): void {
+    for (const s of this.structures) if (s.cd && s.cd > 0) s.cd--;
+    for (let i = this.missiles.length - 1; i >= 0; i--) {
+      const m = this.missiles[i];
+      if (--m.left > 0) continue;
+      this.missiles.splice(i, 1);
+      // interception
+      let shot = false;
+      for (const s of this.structures) {
+        if (s.type !== "sam" || this.friendly(s.owner, m.owner)) continue;
+        const r = CFG.structures.sam.range;
+        if ((s.x + 0.5 - m.tx) ** 2 + (s.y + 0.5 - m.ty) ** 2 <= r * r && this.rng() < CFG.samIntercept) { shot = true; break; }
+      }
+      if (shot) { this.events.push({ k: "text", text: "A missile was shot down by a SAM" }); continue; }
+      this.detonate(m);
+    }
+  }
+
+  private detonate(m: Missile): void {
+    const r = CFG.missileRadius;
+    const hitOwners = new Set<number>();
+    for (let yy = Math.floor(m.ty) - r; yy <= Math.floor(m.ty) + r; yy++) {
+      for (let xx = Math.floor(m.tx) - r; xx <= Math.floor(m.tx) + r; xx++) {
+        if (xx < 0 || yy < 0 || xx >= this.w || yy >= this.h) continue;
+        if ((xx + 0.5 - m.tx) ** 2 + (yy + 0.5 - m.ty) ** 2 > r * r) continue;
+        const t = yy * this.w + xx;
+        const o = this.owner[t];
+        if (this.wall[t]) { this.wall[t] = 0; this.wallDirty.push(t); }
+        if (o === 0 || this.friendly(o, m.owner)) continue;
+        hitOwners.add(o);
+        this.setOwner(t, 0);
+      }
+    }
+    for (const k of this.units) {
+      if (!this.friendly(k.owner, m.owner) && (k.x - m.tx) ** 2 + (k.y - m.ty) ** 2 <= r * r) k.hp = 0;
+    }
+    for (const o of hitOwners) {
+      const d = this.players[o];
+      d.troops -= d.troops * CFG.missileTroopShare;
+      if (d.alive && d.tiles === 0) this.eliminate(d, m.owner);
+    }
+    if (hitOwners.size) this.events.push({ k: "text", text: `${this.players[m.owner].name} hit ${[...hitOwners].map((x) => this.players[x].name).join(", ")} with a missile` });
+  }
+
+  /** A random tile owned by `pid` that satisfies `pred`, or -1 (bounded random probing). */
+  randomOwnedTile(pid: number, pred: (t: number) => boolean = () => true, tries = 400): number {
+    for (let i = 0; i < tries; i++) {
+      const t = Math.floor(this.rng() * this.owner.length);
+      if (this.owner[t] === pid && pred(t)) return t;
+    }
+    return -1;
   }
 
   // ---- helpers for bots -----------------------------------------------------------------------

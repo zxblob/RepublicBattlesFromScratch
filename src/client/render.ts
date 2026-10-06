@@ -5,7 +5,7 @@ import type { ClientGame } from "./state";
 
 export interface Camera { x: number; y: number; zoom: number }
 
-const GLYPH: Record<StructType, string> = { bunker: "B", barracks: "K", bank: "$", radar: "R", tankfactory: "T", airbase: "A", sam: "S" };
+const GLYPH: Record<StructType, string> = { bunker: "B", barracks: "K", bank: "$", radar: "R", tankfactory: "T", airbase: "A", sam: "S", port: "P", city: "C", farm: "F", lab: "L", silo: "M", spaceport: "★" };
 
 function mix(a: number, b: number, t: number): number {
   const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;

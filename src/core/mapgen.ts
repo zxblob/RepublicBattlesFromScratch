@@ -40,7 +40,7 @@ function fbm(x: number, y: number, seed: number): number {
 }
 
 /** Procedural landmass. Only the largest connected landmass is kept so every spawn can reach every other. */
-export function generateMap(seed: number, w: number, h: number, landFraction = 0.5): Uint8Array {
+export function generateMap(seed: number, w: number, h: number, landFraction = 0.5, islands = false): Uint8Array {
   const rng = mulberry32(seed ^ 0x9e3779b9);
   const ox = rng() * 1000;
   const oy = rng() * 1000;
@@ -61,14 +61,14 @@ export function generateMap(seed: number, w: number, h: number, landFraction = 0
   for (let i = 0; i < t.length; i++) {
     t[i] = heights[i] > mtn ? Terrain.Mountain : heights[i] > sea ? Terrain.Land : Terrain.Water;
   }
-  keepLargestLandmass(t, w, h);
+  keepLandmasses(t, w, h, islands ? 7 : 1);
   return t;
 }
 
-function keepLargestLandmass(t: Uint8Array, w: number, h: number): void {
+/** Keep the `keep` largest landmasses (ignoring specks) so every kept piece is a real island or continent. */
+function keepLandmasses(t: Uint8Array, w: number, h: number, keep: number): void {
   const comp = new Int32Array(w * h).fill(-1);
-  let best = -1;
-  let bestSize = 0;
+  const sizes: number[] = [];
   let id = 0;
   const stack: number[] = [];
   for (let s = 0; s < t.length; s++) {
@@ -86,8 +86,12 @@ function keepLargestLandmass(t: Uint8Array, w: number, h: number): void {
       if (y > 0 && t[i - w] !== Terrain.Water && comp[i - w] === -1) { comp[i - w] = id; stack.push(i - w); }
       if (y < h - 1 && t[i + w] !== Terrain.Water && comp[i + w] === -1) { comp[i + w] = id; stack.push(i + w); }
     }
-    if (size > bestSize) { bestSize = size; best = id; }
+    sizes.push(size);
     id++;
   }
-  for (let i = 0; i < t.length; i++) if (t[i] !== Terrain.Water && comp[i] !== best) t[i] = Terrain.Water;
+  const order = sizes.map((n, i) => [n, i]).sort((a, b) => b[0] - a[0]);
+  const floor = keep > 1 ? order[0][0] * 0.04 : 0;
+  const kept = new Set<number>();
+  for (const [n, i] of order.slice(0, keep)) if (n >= floor) kept.add(i);
+  for (let i = 0; i < t.length; i++) if (t[i] !== Terrain.Water && !kept.has(comp[i])) t[i] = Terrain.Water;
 }
