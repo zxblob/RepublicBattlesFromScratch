@@ -301,3 +301,32 @@ describe("OpenFront-style extras", () => {
     expect(g.units.some((u) => u.kind === "r") || g.players[1].gold >= before).toBe(true);
   });
 });
+
+describe("co-op", () => {
+  it("puts all humans on one team: no friendly fire, no splitting, they win together", () => {
+    const g = make(2, {}, 8, 3);
+    g.setCoop();
+    const humans = [1, 2, 3];
+    for (const a of humans) for (const b of humans) expect(g.friendly(a, b)).toBe(true);
+    expect(g.friendly(1, 4)).toBe(false);
+    // attacking a teammate's land does nothing
+    const tile = g.players[2].capital + 1;
+    expect(g.launchAttackTiles(1, [tile], 1).ok).toBe(false);
+    // no alliance to break, no new alliance needed
+    expect(g.breakAlliance(1, 2).ok).toBe(false);
+    expect(g.proposeAlliance(1, 2).error).toBe("already allied");
+    // when the bots are gone the team wins
+    g.spawnTicks = 0;
+    for (const id of [4, 5]) { g.players[id].alive = false; g.players[id].tiles = 0; }
+    g.tick();
+    expect(g.over).toBe(true);
+    expect(humans).toContain(g.winner);
+  });
+  it("in team mode the bots fill the other teams", () => {
+    const g = make(4, { mode: "team", teams: 3 }, 8, 2);
+    g.setCoop();
+    expect(g.players[1].team).toBe(1);
+    expect(g.players[2].team).toBe(1);
+    expect(g.players.slice(3).map((p) => p.team).sort()).toEqual([2, 2, 3, 3]);
+  });
+});

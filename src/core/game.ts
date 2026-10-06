@@ -242,6 +242,28 @@ export class Game {
     return p;
   }
 
+  /**
+   * Co-op: every human player joins one team (team 1), so they cannot attack each other and cannot split up.
+   * Bots stay opponents (in team mode they fill the other teams).
+   */
+  setCoop(): void {
+    const humans = this.players.slice(1).filter((p) => !p.isBot);
+    const bots = this.players.slice(1).filter((p) => p.isBot);
+    if (!humans.length) return;
+    humans.forEach((p, i) => {
+      p.team = 1;
+      p.allies = [];
+      p.color = hslToRgb(205 + (i % 3) * 8, 0.75, Math.min(0.72, 0.42 + Math.floor(i / 3) * 0.1 + (i % 3) * 0.04));
+    });
+    if (this.teams >= 2) {
+      bots.forEach((b, i) => {
+        b.team = 2 + (i % (this.teams - 1));
+        b.color = hslToRgb(((b.team - 1) * 360) / this.teams + 10, 0.72, Math.min(0.7, 0.38 + Math.floor(i / (this.teams - 1)) * 0.07));
+      });
+    } else for (const b of bots) b.team = 0;
+    this.railStale = true;
+  }
+
   // ---- diplomacy ------------------------------------------------------------------------------
 
   friendly(a: number, b: number): boolean {

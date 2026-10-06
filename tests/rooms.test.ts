@@ -41,6 +41,19 @@ describe("rooms", () => {
     r.stop();
   });
 
+  it("co-op puts every human on team 1 and bots on their own", async () => {
+    const r = new Room("TEST6");
+    const a = mockWs(), b = mockWs();
+    r.addClient(a.ws, "Alice");
+    r.addClient(b.ws, "Bob");
+    expect(await r.start({ ...defaultSetup(), bots: 3, coop: true })).toBeNull();
+    const st = last(a.sent, "start")!;
+    const humans = st.players.filter((p) => !p.isBot);
+    expect(humans.map((p) => p.team)).toEqual([1, 1]);
+    expect(st.players.filter((p) => p.isBot).every((p) => p.team === 0)).toBe(true);
+    r.stop();
+  });
+
   it("validates attack input and rate limits chat", async () => {
     const r = new Room("TEST2");
     const a = mockWs();

@@ -28,6 +28,7 @@ Written from scratch (TypeScript, Node, WebSocket, Canvas). MIT licensed.
 ## Modes and features
 
 - **Modes:** Free for all, Teams (2–6), **World War** (expand, then a Cold War countdown when a few powers hold ~70% of the land: bots stop attacking, research opens, then war resumes), and **War of the Worlds** (after the war, a dominant side researches Rocketry, builds a Spaceport and launches to a random planet with alien nations; frozen, volcanic and desert planets change the rules).
+- **Co-op toggle** (lobby and solo options): every human player joins one team against the bots. Teammates can't attack each other, can't break up, share a colour family, and win together. In Teams mode the bots fill the other teams.
 - **Alliances** in free-for-all (both sides must agree; bots sometimes accept) and fixed teams in team mode. Allied land cannot be attacked.
 - **Buildings:** Bunker, Barracks, Bank, Radar, Port, City, Farm, Research Lab, SAM Launcher, Missile Silo, Tank Factory, Airbase, Spaceport, plus drawable Walls.
 - **Units:** tanks, fighters, bombers, transports (land troops from the sea) and warships. **Missiles** from silos can be shot down by SAMs.

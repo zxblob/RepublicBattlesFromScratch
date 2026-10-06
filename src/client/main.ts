@@ -65,6 +65,7 @@ function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
       <small class="muted" id="${prefix}-size-desc"></small></div>
     <div class="opt check" id="${prefix}-islands-row"><input id="${prefix}-islands" type="checkbox"><label for="${prefix}-islands">Islands (needs ports and boats)</label></div>
     <div class="opt"><label>Rival nations: <b id="${prefix}-bots-n">10</b></label><input id="${prefix}-bots" type="range" min="0" max="20" value="10"></div>
+    <div class="opt check"><input id="${prefix}-coop" type="checkbox"><label for="${prefix}-coop">Co-op: all human players are one team against the bots</label></div>
     <div class="opt check"><input id="${prefix}-dom" type="checkbox" checked><label for="${prefix}-dom">Dominance victory (a clear leader wins after a 5 min countdown)</label></div>
     <div class="opt"><label>Or a custom map code (from the map editor)</label><input id="${prefix}-map" maxlength="10" placeholder="optional" autocapitalize="characters"></div>`;
   const g = <T extends HTMLElement>(id: string) => root.querySelector<T>("#" + prefix + "-" + id)!;
@@ -110,6 +111,7 @@ function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
     islands: g<HTMLInputElement>("islands").checked,
     map: g<HTMLInputElement>("map").value.trim().toUpperCase() || val("pre"),
     dominance: g<HTMLInputElement>("dom").checked,
+    coop: g<HTMLInputElement>("coop").checked,
   });
 }
 const menuSetup = mountOptions($("menu-opts"), "mo");
@@ -318,13 +320,16 @@ function renderPanel(force = false): void {
   if (!panel || !game) return;
   let html = "";
   if (panel === "dip") {
-    $("panel-title").textContent = game.mode === "team" ? "Teams" : "Diplomacy";
+    $("panel-title").textContent = game.mode === "team" || (game.players.get(game.you)?.team ?? 0) !== 0 ? "Teams & diplomacy" : "Diplomacy";
     for (const [id, p] of game.players) {
       if (id === game.you || !game.stats.get(id)?.alive) continue;
       const me = game.me_;
       const friendly = game.friendly(id);
       const acts: string[] = [];
-      if (game.mode === "team") { if (friendly) acts.push("<small>your team</small>"); }
+      const myTeam = game.players.get(game.you)?.team ?? 0;
+      const sameTeam = myTeam !== 0 && p.team === myTeam;
+      if (sameTeam) acts.push("<small>your team</small>");
+      else if (game.mode === "team") { /* fixed teams: nothing to negotiate */ }
       else if (me.allies.includes(id)) acts.push(`<button data-unally="${id}">Break</button>`);
       else if (me.reqs.includes(id)) acts.push(`<button data-ally="${id}">Accept</button>`);
       else acts.push(`<button data-ally="${id}">Ally</button>`);
@@ -513,7 +518,7 @@ function radialFor(wx: number, wy: number): RItem[] | null {
   } else {
     items.push({ label: "Attack", sub: p.name, glyph: "⚔", danger: true, onClick: () => quickAttack(tx, ty) });
     if (silo) items.push({ label: "Missile", glyph: "🚀", danger: true, children: nukeItems(wx, wy) });
-    if (game.mode !== "team") {
+    if (game.mode !== "team" && !(game.players.get(owner)?.team)) {
       items.push({ label: me.reqs.includes(owner) ? "Accept" : "Ally", glyph: "🤝", onClick: () => net.send({ t: "ally", with: owner }) });
     }
     const on = me.embargo.includes(owner);

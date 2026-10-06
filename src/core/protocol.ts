@@ -21,6 +21,8 @@ export interface GameSetup {
   map: string;
   /** dominance countdown victory */
   dominance: boolean;
+  /** co-op: all human players share one team against the bots */
+  coop: boolean;
 }
 
 export interface UnitInfo {

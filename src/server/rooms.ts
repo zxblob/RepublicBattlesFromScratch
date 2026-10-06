@@ -45,7 +45,7 @@ interface SaveFile {
 }
 
 export function defaultSetup(): GameSetup {
-  return { mode: "ffa", teams: 2, bots: 10, size: "small", islands: false, map: "", dominance: true };
+  return { mode: "ffa", teams: 2, bots: 10, size: "small", islands: false, map: "", dominance: true, coop: false };
 }
 
 function cleanSetup(s: Partial<GameSetup> | undefined): GameSetup {
@@ -60,6 +60,7 @@ function cleanSetup(s: Partial<GameSetup> | undefined): GameSetup {
     islands: !!o.islands,
     map: String(o.map ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10),
     dominance: o.dominance !== false,
+    coop: !!o.coop,
   };
 }
 
@@ -150,6 +151,7 @@ export class Room {
     for (let i = 0; i < setup.bots; i++) {
       game.addPlayer(names[i % names.length] + (i >= names.length ? ` ${Math.floor(i / names.length) + 1}` : ""), true);
     }
+    if (setup.coop) game.setCoop();
     try {
       game.spawnAll();
     } catch {
