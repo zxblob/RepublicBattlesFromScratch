@@ -35,6 +35,11 @@ export class Renderer {
   private labels: { id: number; x: number; y: number }[] = [];
   private labelsAt = 0;
   private mapDirty = false;
+  /** bounding box of tiles repainted since the last upload (x0,y0,x1,y1) */
+  private rect = [0, 0, 0, 0];
+  private sprites = new Map<string, HTMLCanvasElement>();
+  /** render-resolution multiplier, lowered automatically on slow devices */
+  scale = 1;
   cw = 0;
   ch = 0;
   private dpr = 1;
@@ -71,9 +76,9 @@ export class Renderer {
 
   resize(): void {
     // cap backing-store size: huge canvases are the main cost on phones and software renderers
-    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2) * this.scale;
     const px = this.canvas.clientWidth * this.canvas.clientHeight * this.dpr * this.dpr;
-    if (px > 3_500_000) this.dpr = Math.max(1, Math.sqrt(3_500_000 / (this.canvas.clientWidth * this.canvas.clientHeight)));
+    if (px > 3_500_000) this.dpr = Math.max(0.5, Math.sqrt(3_500_000 / (this.canvas.clientWidth * this.canvas.clientHeight)));
     this.cw = this.canvas.clientWidth;
     this.ch = this.canvas.clientHeight;
     this.canvas.width = Math.round(this.cw * this.dpr);
@@ -132,18 +137,55 @@ export class Renderer {
       for (let i = 0; i < g.owner.length; i++) this.paint(i);
       g.dirty = [];
       this.mapDirty = true;
+      this.rect = [0, 0, g.w, g.h];
       return;
     }
-    for (const i of g.dirty) {
+    let x0 = g.w, y0 = g.h, x1 = 0, y1 = 0;
+    const touch = (i: number) => {
       this.paint(i);
+      const x = i % g.w, y = (i / g.w) | 0;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    };
+    for (const i of g.dirty) {
+      touch(i);
       const x = i % g.w;
-      if (x > 0) this.paint(i - 1);
-      if (x < g.w - 1) this.paint(i + 1);
-      if (i >= g.w) this.paint(i - g.w);
-      if (i + g.w < g.owner.length) this.paint(i + g.w);
+      if (x > 0) touch(i - 1);
+      if (x < g.w - 1) touch(i + 1);
+      if (i >= g.w) touch(i - g.w);
+      if (i + g.w < g.owner.length) touch(i + g.w);
     }
     g.dirty = [];
+    if (this.mapDirty) {
+      this.rect = [Math.min(this.rect[0], x0), Math.min(this.rect[1], y0), Math.max(this.rect[2], x1 + 1), Math.max(this.rect[3], y1 + 1)];
+    } else this.rect = [x0, y0, x1 + 1, y1 + 1];
     this.mapDirty = true;
+  }
+
+  /** Pre-rendered structure icon (one per type+colour) so drawing hundreds of buildings is just blits. */
+  private sprite(type: StructType, color: number): HTMLCanvasElement {
+    const key = type + color;
+    let c = this.sprites.get(key);
+    if (c) return c;
+    c = document.createElement("canvas");
+    c.width = c.height = 40;
+    const x = c.getContext("2d")!;
+    x.beginPath();
+    x.arc(20, 20, 17, 0, Math.PI * 2);
+    x.fillStyle = css(mix(color, 0x000000, 0.35));
+    x.fill();
+    x.lineWidth = 3;
+    x.strokeStyle = "#fff";
+    x.stroke();
+    x.fillStyle = "#fff";
+    x.font = "bold 22px sans-serif";
+    x.textAlign = "center";
+    x.textBaseline = "middle";
+    x.fillText(GLYPH[type], 20, 21);
+    this.sprites.set(key, c);
+    return c;
   }
 
   private updateLabels(now: number): void {
@@ -165,7 +207,11 @@ export class Renderer {
   draw(now: number, ov: Overlay): void {
     const g = this.g;
     this.flushDirty();
-    if (this.mapDirty) { this.mctx.putImageData(this.img, 0, 0); this.mapDirty = false; }
+    if (this.mapDirty) {
+      const [rx0, ry0, rx1, ry1] = this.rect;
+      this.mctx.putImageData(this.img, 0, 0, rx0, ry0, rx1 - rx0, ry1 - ry0);
+      this.mapDirty = false;
+    }
     this.updateLabels(now);
     const ctx = this.canvas.getContext("2d")!;
     const { cam, dpr } = this;
@@ -188,21 +234,17 @@ export class Renderer {
       ctx.fillText("★", (p.cap % g.w) + 0.5, Math.floor(p.cap / g.w) + 0.5);
     }
 
-    // structures
+    // structures: cached sprites, only those on screen
+    const vx0 = cam.x - this.cw / 2 / cam.zoom - 3, vx1 = cam.x + this.cw / 2 / cam.zoom + 3;
+    const vy0 = cam.y - this.ch / 2 / cam.zoom - 3, vy1 = cam.y + this.ch / 2 / cam.zoom + 3;
     const rr = Math.max(0.9, 8 / cam.zoom);
+    ctx.imageSmoothingEnabled = true;
     for (const s of g.structs) {
+      if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue;
       const p = g.players.get(s.owner);
-      ctx.beginPath();
-      ctx.arc(s.x + 0.5, s.y + 0.5, rr, 0, Math.PI * 2);
-      ctx.fillStyle = p ? css(mix(p.color, 0x000000, 0.35)) : "#333";
-      ctx.fill();
-      ctx.lineWidth = Math.max(0.12, 1.5 / cam.zoom);
-      ctx.strokeStyle = "#fff";
-      ctx.stroke();
-      ctx.fillStyle = "#fff";
-      ctx.font = `bold ${rr * 1.3}px sans-serif`;
-      ctx.fillText(GLYPH[s.type], s.x + 0.5, s.y + 0.55);
+      ctx.drawImage(this.sprite(s.type, p ? p.color : 0x444444), s.x + 0.5 - rr, s.y + 0.5 - rr, rr * 2, rr * 2);
     }
+    ctx.imageSmoothingEnabled = false;
 
     // tanks
     for (const u of g.units) {
@@ -327,7 +369,9 @@ export class Renderer {
     ctx.restore();
 
     // names + troop counts
+    let drawn = 0;
     for (const l of this.labels) {
+      if (drawn >= 40) break;
       const p = g.players.get(l.id);
       const st = g.stats.get(l.id);
       if (!p || !st || !st.alive) continue;
@@ -336,6 +380,7 @@ export class Renderer {
       const sx = this.cw / 2 + (l.x - cam.x) * cam.zoom;
       const sy = this.ch / 2 + (l.y - cam.y) * cam.zoom;
       if (sx < -80 || sy < -40 || sx > this.cw + 80 || sy > this.ch + 40) continue;
+      drawn++;
       ctx.font = `600 ${size}px system-ui, sans-serif`;
       ctx.lineWidth = Math.max(2, size / 6);
       ctx.strokeStyle = "rgba(0,0,0,0.7)";

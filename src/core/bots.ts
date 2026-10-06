@@ -16,8 +16,8 @@ function pick<T>(g: Game, arr: T[]): T {
 export function botThink(g: Game, p: Player): void {
   if (!p.alive || g.over) return;
   botResearch(g, p);
-  tryBuild(g, p);
   const scan = g.scanBorder(p.id);
+  tryBuild(g, p, scan.ownFront);
   botNaval(g, p, scan.neutral.length === 0 && scan.enemies.size === 0);
   if (g.attacksOf(p.id).length >= 2) return;
   if (p.troops < g.maxTroops(p) * 0.35) return;
@@ -62,14 +62,13 @@ function botResearch(g: Game, p: Player): void {
   }
 }
 
-function tryBuild(g: Game, p: Player): void {
+function tryBuild(g: Game, p: Player, front: number[]): void {
   const options: StructType[] = ["bunker", "bank", "radar", "sam", "city", "farm", "port"];
   if (g.research) options.push("lab");
   const type = pick(g, options);
   if (p.gold < g.structureCost(p.id, type) + 50) return;
   let tile = -1;
   if (type === "bunker" || type === "sam") {
-    const front = g.scanBorder(p.id).ownFront;
     if (!front.length) return;
     tile = pick(g, front);
   } else if (type === "port") {

@@ -23,6 +23,8 @@ export interface Player {
   tech: string[];
   skin?: string;
   nextBoat?: number;
+  /** bounding box of owned tiles [x0,y0,x1,y1] (only grows); speeds up border scans on big maps */
+  bb?: [number, number, number, number];
 }
 
 export type GameMode = "ffa" | "team" | "ww" | "wow";
@@ -148,6 +150,8 @@ export class Game {
   phase: Phase = "play";
   phaseTicks = 0;
   private hold = 0;
+  /** bots think every N ticks; larger maps think less often to keep the server fast */
+  readonly thinkEvery: number;
   winnerTeam = 0;
 
   tickNo = 0;
@@ -177,6 +181,7 @@ export class Game {
     this.teams = this.mode === "team" ? Math.max(2, Math.min(6, opts.teams ?? 2)) : 0;
     this.planet = opts.planet ?? "";
     this.research = this.mode === "ww" || this.mode === "wow";
+    this.thinkEvery = w * h > 400_000 ? 30 : w * h > 150_000 ? 20 : 10;
     this.phase = this.planet ? "war" : this.research ? "expand" : "play";
     this.rng = mulberry32(seed ^ 0xabcdef);
     this.terrain = opts.terrain ?? generateMap(seed, w, h, opts.islands ? 0.4 : this.planet === "volcanic" ? 0.55 : 0.5, !!opts.islands);
@@ -412,7 +417,18 @@ export class Game {
     const prev = this.owner[tile];
     if (prev === id) return;
     if (prev) this.players[prev].tiles--;
-    if (id) this.players[id].tiles++;
+    if (id) {
+      const pl = this.players[id];
+      pl.tiles++;
+      const x = tile % this.w, y = (tile / this.w) | 0;
+      if (!pl.bb) pl.bb = [x, y, x, y];
+      else {
+        if (x < pl.bb[0]) pl.bb[0] = x;
+        if (y < pl.bb[1]) pl.bb[1] = y;
+        if (x > pl.bb[2]) pl.bb[2] = x;
+        if (y > pl.bb[3]) pl.bb[3] = y;
+      }
+    }
     this.owner[tile] = id;
     this.dirty.push(tile);
     const s = this.structAt.get(tile);
@@ -986,7 +1002,7 @@ export class Game {
       if (this.planet === "desert") gold *= 0.6;
       p.gold += gold;
       if (researching) p.rp += p.tiles * CFG.rpPerTile + (c.lab ?? 0) * CFG.labRp;
-      if (p.isBot && (this.tickNo + id) % 10 === 0) botThink(this, p);
+      if (p.isBot && (this.tickNo + id) % this.thinkEvery === 0) botThink(this, p);
     }
     this.stepPhase();
     this.checkWin();
@@ -1167,22 +1183,30 @@ export class Game {
     const neutral: number[] = [];
     const enemies = new Map<number, number[]>();
     const ownFront: number[] = [];
-    for (let i = 0; i < owner.length; i++) {
-      if (owner[i] !== pid) continue;
-      const x = i % w, y = (i / w) | 0;
-      const ns = [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1];
-      let front = false;
-      for (const n of ns) {
-        if (n < 0 || terrain[n] === Terrain.Water || owner[n] === pid) continue;
-        if (owner[n] === 0) neutral.push(n);
-        else {
-          front = true;
-          const list = enemies.get(owner[n]);
-          if (list) list.push(n);
-          else enemies.set(owner[n], [n]);
-        }
+    const bb = this.players[pid].bb ?? [0, 0, w - 1, h - 1];
+    let front = false;
+    const visit = (n: number): void => {
+      if (terrain[n] === Terrain.Water || owner[n] === pid) return;
+      const o = owner[n];
+      if (o === 0) neutral.push(n);
+      else {
+        front = true;
+        const list = enemies.get(o);
+        if (list) list.push(n);
+        else enemies.set(o, [n]);
       }
-      if (front) ownFront.push(i);
+    };
+    for (let y = bb[1]; y <= bb[3]; y++) {
+      for (let x = bb[0]; x <= bb[2]; x++) {
+        const i = y * w + x;
+        if (owner[i] !== pid) continue;
+        front = false;
+        if (x > 0) visit(i - 1);
+        if (x < w - 1) visit(i + 1);
+        if (y > 0) visit(i - w);
+        if (y < h - 1) visit(i + w);
+        if (front) ownFront.push(i);
+      }
     }
     return { neutral, enemies, ownFront };
   }

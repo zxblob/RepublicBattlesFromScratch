@@ -112,3 +112,7 @@ summary { cursor: pointer; font-weight: 600; }
 #bottom { grid-template-columns: minmax(0, 1fr); overflow: hidden; }
 #bottom > * { min-width: 0; }
 #builds { max-width: 100%; }
+
+.seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 6px; }
+.seg button { padding: 10px 6px; font-size: 14px; }
+.seg button.on { background: var(--accent); color: #1b1600; border-color: transparent; }

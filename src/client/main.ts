@@ -50,33 +50,55 @@ function toast(text: string, ms = 3200): void {
 
 // ---- game options (shared by the solo menu and the lobby host) ----------------------------------
 function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
+  // button groups instead of <select>: native dropdowns do not open in some embedded browsers and are awkward with a pen
+  const seg = (id: string, items: [string, string][], def: string) =>
+    `<div class="seg" id="${prefix}-${id}" data-v="${def}">${items.map(([v, l]) => `<button type="button" data-v="${v}" class="${v === def ? "on" : ""}">${l}</button>`).join("")}</div>`;
   root.innerHTML = `
-    <div class="opt"><label>Mode</label><select id="${prefix}-mode">
-      <option value="ffa">Free for all</option><option value="team">Teams</option>
-      <option value="ww">World War (cold war + research)</option><option value="wow">War of the Worlds (+ space race)</option></select></div>
+    <div class="opt"><label>Mode</label>${seg("mode", [["ffa", "Free for all"], ["team", "Teams"], ["ww", "World War"], ["wow", "War of the Worlds"]], "ffa")}
+      <small class="muted" id="${prefix}-mode-desc"></small></div>
     <div class="opt" id="${prefix}-teams-row"><label>Teams: <b id="${prefix}-teams-n">2</b></label><input id="${prefix}-teams" type="range" min="2" max="6" value="2"></div>
-    <div class="opt"><label>Map size</label><select id="${prefix}-size">
-      <option value="small">Small (192×112)</option><option value="medium">Medium (320×192)</option>
-      <option value="large">Large (512×320)</option><option value="huge">Huge (1024×640)</option></select></div>
+    <div class="opt"><label>Map size</label>${seg("size", [["small", "Small"], ["medium", "Medium"], ["large", "Large"], ["huge", "Huge"]], "small")}
+      <small class="muted" id="${prefix}-size-desc"></small></div>
     <div class="opt check"><input id="${prefix}-islands" type="checkbox"><label for="${prefix}-islands">Islands (needs ports and boats)</label></div>
     <div class="opt"><label>Rival nations: <b id="${prefix}-bots-n">10</b></label><input id="${prefix}-bots" type="range" min="0" max="20" value="10"></div>
     <div class="opt"><label>Custom map code (from the map editor)</label><input id="${prefix}-map" maxlength="10" placeholder="optional" autocapitalize="characters"></div>`;
-  const g = <T extends HTMLElement>(s: string) => root.querySelector<T>("#" + prefix + "-" + s)!;
+  const g = <T extends HTMLElement>(id: string) => root.querySelector<T>("#" + prefix + "-" + id)!;
+  const MODE_DESC: Record<string, string> = {
+    ffa: "Everyone for themselves. Alliances are possible.",
+    team: "Fixed teams. Last team standing wins.",
+    ww: "Expand, then a Cold War with research, then total war.",
+    wow: "World War, then a space race to other planets.",
+  };
+  const SIZE_DESC: Record<string, string> = {
+    small: "192×112", medium: "320×192", large: "512×320", huge: "1024×640 (needs a strong server)",
+  };
+  const val = (id: string) => g<HTMLElement>(id).dataset.v!;
   const sync = () => {
-    g("teams-row").classList.toggle("hidden", g<HTMLSelectElement>("mode").value !== "team");
+    g("teams-row").classList.toggle("hidden", val("mode") !== "team");
     g("teams-n").textContent = g<HTMLInputElement>("teams").value;
     g("bots-n").textContent = g<HTMLInputElement>("bots").value;
-    const max = { small: 20, medium: 30, large: 40, huge: 60 }[g<HTMLSelectElement>("size").value as "small"];
-    g<HTMLInputElement>("bots").max = String(max);
+    g("mode-desc").textContent = MODE_DESC[val("mode")];
+    g("size-desc").textContent = SIZE_DESC[val("size")];
+    const max = { small: 20, medium: 30, large: 40, huge: 60 }[val("size") as "small"];
+    const bots = g<HTMLInputElement>("bots");
+    bots.max = String(max);
+    if (Number(bots.value) > max) bots.value = String(max);
   };
+  root.addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>(".seg button");
+    if (!b) return;
+    const group = b.parentElement as HTMLElement;
+    group.dataset.v = b.dataset.v;
+    group.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    sync();
+  });
   root.addEventListener("input", sync);
-  root.addEventListener("change", sync);
   sync();
   return () => ({
-    mode: g<HTMLSelectElement>("mode").value as GameSetup["mode"],
+    mode: val("mode") as GameSetup["mode"],
     teams: Number(g<HTMLInputElement>("teams").value),
     bots: Number(g<HTMLInputElement>("bots").value),
-    size: g<HTMLSelectElement>("size").value as GameSetup["size"],
+    size: val("size") as GameSetup["size"],
     islands: g<HTMLInputElement>("islands").checked,
     map: g<HTMLInputElement>("map").value.trim().toUpperCase(),
   });
@@ -407,9 +429,28 @@ function hud(): void {
   renderPanel();
 }
 
+// adaptive resolution: if frames keep taking too long (software rendering, weak phone), render at lower resolution
+let lastFrameAt = 0, frameEma = 16, slowFor = 0;
+function adapt(now: number): void {
+  const d = now - lastFrameAt;
+  lastFrameAt = now;
+  if (d <= 0 || d > 500) return; // tab was hidden
+  frameEma = frameEma * 0.92 + d * 0.08;
+  slowFor = frameEma > 48 ? slowFor + 1 : 0;
+  if (slowFor > 45 && renderer.scale > 0.5) {
+    renderer.scale = Math.max(0.5, renderer.scale - 0.25);
+    renderer.resize();
+    forceDraw = true;
+    slowFor = 0;
+    frameEma = 16;
+    toast("Lowered render quality for smoother play");
+  }
+}
+
 function frame(now: number): void {
   requestAnimationFrame(frame);
   if (!game) return;
+  adapt(now);
   ov.lasso = input.lasso;
   ov.ghosts = ov.ghosts.filter((g) => now - g.born < 2200);
   // range ring: hovering the map while placing, hovering an own structure, or hovering a build button
@@ -430,9 +471,9 @@ function frame(now: number): void {
   const cam = renderer.cam;
   const sig = `${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.zoom.toFixed(3)},${renderer.cw},${renderer.ch}`;
   const ring = ov.ringAt ? `${ov.ringAt.x},${ov.ringAt.y},${ov.ringAt.r}` : "";
-  const animating = input.lasso.length > 0 || ov.ghosts.length > 0 || game.attacks.length > 0 || game.missiles.length > 0;
+  const animating = input.lasso.length > 0 || ov.ghosts.length > 0 || game.missiles.length > 0 || game.attacks.some((a) => a.x !== undefined);
   const changed = sig !== lastSig || game.tick !== lastTick || ring !== lastRing || game.dirty.length > 0 || game.skinChanged.length > 0 || forceDraw;
-  if (changed || (animating && now - lastDraw > 33)) {
+  if (changed || (animating && now - lastDraw > 45)) {
     lastSig = sig; lastTick = game.tick; lastRing = ring; lastDraw = now; forceDraw = false;
     renderer.draw(now, ov);
   }
