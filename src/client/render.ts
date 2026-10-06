@@ -267,6 +267,7 @@ export class Renderer {
     for (const s of g.structs) {
       if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue;
       const p = g.players.get(s.owner);
+      if (crisp) this.shadow(ctx, s.x + 0.5, s.y + 0.5 + rr * 0.7, rr * 0.95, rr * 0.38, 0.28);
       ctx.drawImage(this.sprite(s.type, p ? p.color : 0x444444), s.x + 0.5 - rr, s.y + 0.5 - rr, rr * 2, rr * 2);
     }
     ctx.imageSmoothingEnabled = false;
@@ -290,6 +291,8 @@ export class Renderer {
         const a = this.heading.get(u.id) ?? 0;
         const size = Math.max(1.3, 13 / cam.zoom) * (u.k === "b" ? 1.25 : u.k === "w" ? 1.2 : u.k === "r" ? 0.8 : 1);
         ctx.imageSmoothingEnabled = false;
+        const air = u.k === "f" || u.k === "b";
+        this.shadow(ctx, u.x + (air ? size * 0.35 : 0), u.y + size * (air ? 0.9 : 0.55), size * (air ? 0.8 : 0.7), size * (air ? 0.3 : 0.25), air ? 0.2 : 0.3);
         ctx.save();
         ctx.translate(u.x, u.y);
         ctx.rotate(a);
@@ -477,6 +480,14 @@ export class Renderer {
     }
     ctx.globalAlpha = 1;
     void now;
+  }
+
+  /** soft ground shadow under a sprite */
+  private shadow(ctx: CanvasRenderingContext2D, x: number, y: number, rx: number, ry: number, alpha: number): void {
+    ctx.beginPath();
+    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+    ctx.fill();
   }
 
   private path(ctx: CanvasRenderingContext2D, pts: number[], close: boolean): void {
