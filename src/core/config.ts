@@ -51,9 +51,24 @@ export const CFG = {
     bunker: { cost: 100, range: 7, label: "Bunker", desc: "Tiles in range cost 60% more to take", mult: 1.6 },
     barracks: { cost: 150, range: 9, label: "Barracks", desc: "Your attacks in range cost 25% less", mult: 0.75 },
     bank: { cost: 200, range: 0, label: "Bank", desc: "Extra gold income", mult: 1 },
+    tankfactory: { cost: 150, range: 0, label: "Tank Factory", desc: "Lets you train tanks (max 3 per factory)", mult: 1 },
     radar: { cost: 120, range: 14, label: "Radar", desc: "Reveals enemy attack fronts and troop counts", mult: 1 },
   },
   structCostGrowth: 1.25,
+
+  // tanks and walls
+  tankCost: 60,
+  tanksPerFactory: 3,
+  tankSpeed: 0.35, // tiles per tick
+  tankHp: 100,
+  tankOverrunDmg: 3, // hp lost per tick while standing on enemy land
+  tankWallDmg: 3, // wall hp removed per tick while adjacent
+  tankRange: 6, // tiles around a tank where your attacks are cheaper
+  tankMult: 0.8,
+  wallTileCost: 3,
+  wallHp: 150,
+  maxWallTilesPerDraw: 80,
+  maxTankPathPoints: 60,
 } as const;
 
 export type StructType = keyof typeof CFG.structures;

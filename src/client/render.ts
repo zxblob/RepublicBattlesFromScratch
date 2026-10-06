@@ -5,7 +5,7 @@ import type { ClientGame } from "./state";
 
 export interface Camera { x: number; y: number; zoom: number }
 
-const GLYPH: Record<StructType, string> = { bunker: "B", barracks: "K", bank: "$", radar: "R" };
+const GLYPH: Record<StructType, string> = { bunker: "B", barracks: "K", bank: "$", radar: "R", tankfactory: "T" };
 
 function mix(a: number, b: number, t: number): number {
   const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
@@ -20,6 +20,8 @@ export interface Overlay {
   hover: { x: number; y: number } | null;
   buildType: StructType | null;
   ringAt: { x: number; y: number; r: number } | null;
+  selTank: number;
+  wallDraft: boolean;
 }
 
 export class Renderer {
@@ -87,6 +89,12 @@ export class Renderer {
     const x = i % g.w, y = (i / g.w) | 0;
     const n = ((x * 7 + y * 13) % 5) / 5;
     let base = t === Terrain.Water ? mix(0x16395c, 0x1d4a73, n) : t === Terrain.Mountain ? mix(0x77756d, 0x8a877d, n) : mix(0x4d7a4b, 0x5c8a55, n);
+    if (g.walls.has(i)) {
+      const hp = g.walls.get(i)!;
+      const wp = g.players.get(g.owner[i]);
+      const stone = mix(0x2a2a2e, 0x7a7a80, Math.min(1, hp / 150));
+      return wp ? mix(stone, wp.color, 0.22) : stone;
+    }
     const o = g.owner[i];
     if (!o) return base;
     const p = g.players.get(o);
@@ -185,6 +193,28 @@ export class Renderer {
       ctx.fillText(GLYPH[s.type], s.x + 0.5, s.y + 0.55);
     }
 
+    // tanks
+    for (const u of g.units) {
+      const p = g.players.get(u.owner);
+      const sel = u.owner === g.you && u.id === ov.selTank;
+      const r = Math.max(0.9, 8 / cam.zoom);
+      if (sel && u.tx >= 0) {
+        ctx.setLineDash([5 / cam.zoom, 4 / cam.zoom]);
+        ctx.lineWidth = Math.max(0.1, 2 / cam.zoom);
+        ctx.strokeStyle = "rgba(255,230,120,0.9)";
+        ctx.beginPath(); ctx.moveTo(u.x, u.y); ctx.lineTo(u.tx, u.ty); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.fillStyle = p ? css(mix(p.color, 0x000000, 0.25)) : "#444";
+      ctx.fillRect(u.x - r, u.y - r * 0.7, r * 2, r * 1.4);
+      ctx.lineWidth = Math.max(0.12, (sel ? 3 : 1.5) / cam.zoom);
+      ctx.strokeStyle = sel ? "#ffe678" : "#fff";
+      ctx.strokeRect(u.x - r, u.y - r * 0.7, r * 2, r * 1.4);
+      ctx.fillStyle = "#fff";
+      ctx.font = `bold ${r * 1.1}px sans-serif`;
+      ctx.fillText("T", u.x, u.y + 0.05);
+    }
+
     // range ring
     if (ov.ringAt) {
       const r = ov.ringAt;
@@ -213,9 +243,12 @@ export class Renderer {
 
     // live lasso
     if (ov.lasso.length >= 4) {
-      this.path(ctx, ov.lasso, true);
-      ctx.fillStyle = "rgba(255,230,120,0.18)";
-      ctx.fill();
+      const open = ov.wallDraft || ov.selTank > 0;
+      if (!open) {
+        this.path(ctx, ov.lasso, true);
+        ctx.fillStyle = "rgba(255,230,120,0.18)";
+        ctx.fill();
+      }
       ctx.lineWidth = Math.max(0.12, 2.5 / cam.zoom);
       ctx.strokeStyle = "#ffe678";
       ctx.lineJoin = "round";

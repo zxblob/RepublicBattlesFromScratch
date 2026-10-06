@@ -76,13 +76,21 @@ $("over-ok").onclick = () => { $("over").classList.add("hidden"); leave(); };
 // ---- game UI -----------------------------------------------------------------------------------
 const canvas = $<HTMLCanvasElement>("c");
 const renderer = new Renderer(canvas);
-const ov: Overlay = { lasso: [], ghosts: [], hover: null, buildType: null, ringAt: null };
+const ov: Overlay = { lasso: [], ghosts: [], hover: null, buildType: null, ringAt: null, selTank: 0, wallDraft: false };
 
 const ratioEl = $<HTMLInputElement>("ratio");
 ratioEl.oninput = () => ($("ratio-val").textContent = ratioEl.value + "%");
 $("draw").onclick = () => { drawMode = !drawMode; $("draw").classList.toggle("on", drawMode); };
 $("home").onclick = () => { const p = game?.players.get(game.you); if (p && game) renderer.centerOn(p.cap, 7); };
 $("ready").onclick = () => { net.send({ t: "ready" }); $("ready").textContent = "Waiting…"; };
+$("wall").onclick = () => {
+  ov.wallDraft = !ov.wallDraft;
+  ov.selTank = 0;
+  buildType = null;
+  $("wall").classList.toggle("on", ov.wallDraft);
+  if (ov.wallDraft) toast("Draw a line on your own land to build a wall");
+};
+$("train").onclick = () => net.send({ t: "train" });
 $("pause").onclick = () => net.send({ t: "pause" });
 $("cancel").onclick = () => { for (const a of game?.attacks ?? []) if (a.by === game!.you) net.send({ t: "cancel", id: a.id }); };
 
@@ -94,6 +102,9 @@ for (const type of STRUCT_TYPES) {
   b.title = CFG.structures[type].desc;
   b.onclick = () => {
     buildType = buildType === type ? null : type;
+    ov.wallDraft = false;
+    $("wall").classList.remove("on");
+    ov.selTank = 0;
     refreshBuilds();
     if (buildType) toast(`${CFG.structures[type].label}: ${CFG.structures[type].desc}. Tap your land to place.`);
   };
@@ -115,6 +126,10 @@ const input = new Input(canvas, renderer, {
   drawMode: () => drawMode,
   onLasso(poly, pressure) {
     if (!game || !game.me().alive) return;
+    const rounded = poly.map((n) => Math.round(n * 100) / 100);
+    if (ov.wallDraft) { net.send({ t: "wall", pts: rounded }); ov.wallDraft = false; $("wall").classList.remove("on"); return; }
+    if (ov.selTank) { net.send({ t: "move", id: ov.selTank, pts: rounded }); return; }
+    if (poly.length < 6) return; // an attack area needs at least 3 points
     let ratio = Number(ratioEl.value) / 100;
     if (pressure !== null) ratio = Math.min(1, ratio * Math.max(0.3, Math.min(1.6, 0.4 + 1.2 * pressure)));
     net.send({ t: "attack", poly: poly.map((n) => Math.round(n * 100) / 100), ratio });
@@ -124,6 +139,10 @@ const input = new Input(canvas, renderer, {
   onTap(wx, wy) {
     if (!game) return;
     if (game.sp > 0) { net.send({ t: "spawn", x: Math.floor(wx), y: Math.floor(wy) }); return; }
+    // tanks: tap one of yours to select, tap elsewhere to send it there
+    const near = game.units.find((u) => u.owner === game!.you && Math.hypot(u.x - wx, u.y - wy) * renderer.cam.zoom < 22);
+    if (near) { ov.selTank = ov.selTank === near.id ? 0 : near.id; if (ov.selTank) toast("Tank selected: draw its route, or tap a spot"); return; }
+    if (ov.selTank && !buildType) { net.send({ t: "move", id: ov.selTank, pts: [wx, wy] }); return; }
     if (!buildType && openAttackMenu(wx, wy)) return;
     closeAttackMenu();
     if (!buildType) return;
@@ -186,6 +205,10 @@ function hud(): void {
   }).join(""));
   const incoming = game.attacks.filter((a) => a.on === game!.you && a.by !== game!.you);
   setHtml($("alerts"), incoming.map((a) => `<div>⚠ ${esc(game!.players.get(a.by)?.name ?? "?")} is invading you${a.pool !== undefined ? ` (${fmt(a.pool)})` : ""}</div>`).join(""));
+  const hasFactory = game.structs.some((s) => s.owner === game!.you && s.type === "tankfactory");
+  $("train").classList.toggle("hidden", !hasFactory);
+  setText($("train"), `Tank · ${fmt(CFG.tankCost)}`);
+  if (ov.selTank && !game.units.some((u) => u.id === ov.selTank)) ov.selTank = 0;
   $("cancel").classList.toggle("hidden", !game.attacks.some((a) => a.by === game!.you));
   $("pause").classList.toggle("hidden", !isHost);
   setText($("pause"), game.paused ? "▶" : "⏸");

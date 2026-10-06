@@ -3,7 +3,7 @@ import type { WebSocket } from "ws";
 import { CFG } from "../core/config";
 import { Game } from "../core/game";
 import type {
-  AttackInfo, ClientMsg, LobbyMember, PlayerStat, ServerMsg, StructInfo,
+  AttackInfo, ClientMsg, LobbyMember, PlayerStat, ServerMsg, StructInfo, UnitInfo,
 } from "../core/protocol";
 import { rle } from "../core/protocol";
 
@@ -99,6 +99,8 @@ export class Room {
     for (const c of humans) c.playerId = game.addPlayer(c.name, false).id;
     for (let i = 0; i < bots; i++) game.addPlayer(BOT_NAMES[i % BOT_NAMES.length] + (i >= BOT_NAMES.length ? ` ${Math.floor(i / BOT_NAMES.length) + 1}` : ""), true);
     game.spawnAll();
+    const startGold = Number(process.env.RB_START_GOLD ?? 0);
+    if (startGold > 0) for (const pl of game.players.slice(1)) pl.gold = startGold;
     this.game = game;
     game.dirty = [];
     game.spawnTicks = SPAWN_TICKS;
@@ -113,6 +115,21 @@ export class Room {
       t: "start", you: c.playerId, seed: g.seed, w: g.w, h: g.h,
       players: g.players.slice(1).map((p) => ({ id: p.id, name: p.name, color: p.color, isBot: p.isBot, cap: p.capital })),
       owners: rle(g.owner), structs: this.structInfos(), tick: g.tickNo, paused: this.paused, sp: g.spawnTicks,
+      walls: this.wallList(), units: this.unitInfos(),
+    });
+  }
+
+  private wallList(): [number, number][] {
+    const g = this.game!;
+    const out: [number, number][] = [];
+    for (let i = 0; i < g.wall.length; i++) if (g.wall[i]) out.push([i, g.wall[i]]);
+    return out;
+  }
+
+  private unitInfos(): UnitInfo[] {
+    return this.game!.tanks.map((k) => {
+      const last = k.path[k.path.length - 1];
+      return { id: k.id, owner: k.owner, x: Math.round(k.x * 100) / 100, y: Math.round(k.y * 100) / 100, hp: k.hp, tx: last ? last[0] : -1, ty: last ? last[1] : -1 };
     });
   }
 
@@ -133,6 +150,24 @@ export class Room {
         if (!g || !c.playerId) return;
         const r = g.respawn(c.playerId, Math.floor(Number(msg.x)), Math.floor(Number(msg.y)));
         if (!r.ok) this.send(c, { t: "error", msg: r.error ?? "can't spawn there" });
+        return;
+      }
+      case "wall": {
+        if (!g || this.paused || !c.playerId || !Array.isArray(msg.pts)) return;
+        const r = g.buildWall(c.playerId, msg.pts);
+        if (!r.ok) this.send(c, { t: "error", msg: r.error ?? "failed" });
+        return;
+      }
+      case "train": {
+        if (!g || this.paused || !c.playerId) return;
+        const r = g.trainTank(c.playerId);
+        if (!r.ok) this.send(c, { t: "error", msg: r.error ?? "failed" });
+        return;
+      }
+      case "move": {
+        if (!g || this.paused || !c.playerId || !Array.isArray(msg.pts)) return;
+        const r = g.moveTank(c.playerId, Number(msg.id), msg.pts);
+        if (!r.ok) this.send(c, { t: "error", msg: r.error ?? "failed" });
         return;
       }
       case "ready": {
@@ -186,6 +221,10 @@ export class Room {
       const pl = g.players[id];
       p.push([id, Math.floor(pl.troops), Math.floor(pl.gold), pl.tiles, pl.alive ? 1 : 0]);
     }
+    const wallTiles = [...new Set(g.wallDirty)];
+    g.wallDirty = [];
+    const w: [number, number][] | undefined = wallTiles.length ? wallTiles.map((t) => [t, g.wall[t]] as [number, number]) : undefined;
+    const u = this.unitInfos();
     const caps = g.capDirty.length ? g.capDirty : undefined;
     g.capDirty = [];
     const structs = g.structDirty ? this.structInfos() : undefined;
@@ -216,7 +255,7 @@ export class Room {
           if (near) a.push({ id: at.id, by: at.by, on: at.on, x: at.cx, y: at.cy, pool: Math.floor(at.pool), left: at.tiles.size });
         }
       }
-      this.send(c, { t: "tick", n: g.tickNo, d, p, a, s: structs, ev: ev.length ? ev : undefined, sp: g.spawnTicks, caps });
+      this.send(c, { t: "tick", n: g.tickNo, d, p, a, s: structs, ev: ev.length ? ev : undefined, sp: g.spawnTicks, caps, u, w });
     }
     if (g.over) {
       this.broadcast({ t: "over", winner: g.winner });

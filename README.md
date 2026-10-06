@@ -10,7 +10,9 @@ Written from scratch (TypeScript, Node, WebSocket, Canvas). MIT licensed.
 - **Solo** against 1–20 nation bots, or **create a private lobby** and share the 5-letter code.
 - **Invade:** drag to lasso an area of enemy or neutral land that touches your border. Your troops commit to that area only,
   scaled by the *Troops per attack* slider.
-- **Build:** Bunker (defence), Barracks (cheaper attacks), Bank (gold), Radar (shows enemy attack fronts). Hover or tap a
+- **Build:** Bunker (defence), Barracks (cheaper attacks), Bank (gold), Radar (shows enemy attack fronts), Tank Factory.
+- **Tanks:** train at a factory, tap one to select, then draw its route (or tap a spot). Tanks make your attacks nearby cheaper and break enemy walls; they can't cross water or mountains and die on enemy land.
+- **Walls:** press Wall, then draw a line on your own flat land. Attacks can't capture wall tiles until a tank breaks them. Hover or tap a
   structure to see its range ring.
 
 ### Controls
@@ -39,7 +41,7 @@ npm test           # simulation tests
 npm run typecheck
 ```
 
-`PORT` sets the port. The server serves the client and the WebSocket at `/ws` from one process.
+`PORT` sets the port. `RB_START_GOLD` (sim units, shown x100) gives everyone starting gold, handy for testing. The server serves the client and the WebSocket at `/ws` from one process.
 
 ## Self-host
 
@@ -67,4 +69,4 @@ that prefix to the server and strip it.
 - `src/core` deterministic simulation (map, combat, bots, structures), shared by server and client
 - `src/server` HTTP + WebSocket rooms, 10 ticks/s, authoritative
 - `src/client` canvas renderer, pointer/pen input, UI
-- Not yet built: ships, tanks and planes, research modes, custom map creator (see roadmap in the original plan).
+- Not yet built: planes, ships, research modes, custom map creator (see `docs/ROADMAP.md`).

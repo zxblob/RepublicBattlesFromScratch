@@ -228,7 +228,7 @@ export class Input {
     this.lasso = [];
     this.lassoPtr = -1;
     this.mode = "none";
-    if (pts.length < 6) return;
+    if (pts.length < 4) return; // walls and tank routes may be a simple 2-point line
     const n = pts.length / 2;
     if (n > MAX_POINTS) {
       const out: number[] = [];

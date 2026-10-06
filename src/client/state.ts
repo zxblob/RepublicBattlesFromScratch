@@ -1,7 +1,7 @@
 import { CFG, StructType } from "../core/config";
 import { generateMap, Terrain } from "../core/mapgen";
 import { unrle } from "../core/protocol";
-import type { AttackInfo, PlayerInfo, PlayerStat, ServerMsg, StructInfo } from "../core/protocol";
+import type { AttackInfo, PlayerInfo, PlayerStat, ServerMsg, StructInfo, UnitInfo } from "../core/protocol";
 
 export interface Stat { troops: number; gold: number; tiles: number; alive: boolean }
 
@@ -15,6 +15,8 @@ export class ClientGame {
   stats = new Map<number, Stat>();
   attacks: AttackInfo[] = [];
   structs: StructInfo[] = [];
+  units: UnitInfo[] = [];
+  walls = new Map<number, number>();
   paused = false;
   over = false;
   winner = 0;
@@ -34,6 +36,8 @@ export class ClientGame {
     unrle(m.owners, this.owner);
     for (const p of m.players) this.players.set(p.id, p);
     this.structs = m.structs;
+    this.units = m.units;
+    for (const [t, hp] of m.walls) this.walls.set(t, hp);
     this.paused = m.paused;
     this.tick = m.tick;
     this.sp = m.sp;
@@ -57,6 +61,8 @@ export class ClientGame {
       if (s) { s.troops = troops; s.gold = gold; s.tiles = tiles; s.alive = !!alive; }
     }
     this.attacks = m.a;
+    this.units = m.u;
+    if (m.w) for (const [t, hp] of m.w) { if (hp > 0) this.walls.set(t, hp); else this.walls.delete(t); this.dirty.push(t); }
     this.sp = m.sp;
     if (m.caps) for (const [id, cap] of m.caps) { const p = this.players.get(id); if (p) p.cap = cap; }
     if (m.s) this.structs = m.s;

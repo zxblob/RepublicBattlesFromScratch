@@ -45,7 +45,7 @@ export function botThink(g: Game, p: Player): void {
 }
 
 function tryBuild(g: Game, p: Player): void {
-  const type: StructType = pick(g, STRUCT_TYPES);
+  const type: StructType = pick(g, STRUCT_TYPES.filter((t) => t !== "tankfactory"));
   if (p.gold < g.structureCost(p.id, type) + 50) return;
   let tile = -1;
   if (type === "bank" || type === "radar") {

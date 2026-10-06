@@ -1,5 +1,16 @@
 import type { StructType } from "./config";
 
+export interface UnitInfo {
+  id: number;
+  owner: number;
+  x: number;
+  y: number;
+  hp: number;
+  /** final waypoint, or -1 when idle */
+  tx: number;
+  ty: number;
+}
+
 export interface PlayerInfo {
   id: number;
   name: string;
@@ -48,6 +59,9 @@ export type ClientMsg =
   | { t: "build"; type: StructType; x: number; y: number }
   | { t: "cancel"; id: number }
   | { t: "spawn"; x: number; y: number }
+  | { t: "wall"; pts: number[] }
+  | { t: "train" }
+  | { t: "move"; id: number; pts: number[] }
   | { t: "ready" }
   | { t: "reinforce"; id: number; ratio: number }
   | { t: "pause" }
@@ -71,6 +85,8 @@ export type ServerMsg =
       paused: boolean;
       /** spawn-phase ticks remaining */
       sp: number;
+      walls: [number, number][];
+      units: UnitInfo[];
     }
   | {
       t: "tick";
@@ -83,6 +99,8 @@ export type ServerMsg =
       ev?: string[];
       sp: number;
       caps?: [number, number][];
+      u: UnitInfo[];
+      w?: [number, number][];
     }
   | { t: "paused"; paused: boolean }
   | { t: "over"; winner: number }

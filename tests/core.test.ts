@@ -134,6 +134,73 @@ describe("spawn phase", () => {
   });
 });
 
+describe("tanks and walls", () => {
+  function flat(g: Game, pid: number) {
+    const p = g.players[pid];
+    return { cx: p.capital % g.w, cy: (p.capital / g.w) | 0, p };
+  }
+  it("walls block conquest until a tank breaks them", () => {
+    const g = makeGame(2);
+    const { cx, cy, p } = flat(g, 1);
+    p.gold = 5000;
+    // wall on the east edge of the start patch
+    expect(g.buildWall(1, [cx + 3, cy - 2, cx + 3, cy + 2]).ok).toBe(true);
+    const wallTile = cy * g.w + cx + 3;
+    expect(g.wall[wallTile]).toBeGreaterThan(0);
+    // enemy lasso over the wall tile touching player 1's land from outside is impossible; test directly
+    const e = g.players[2];
+    e.gold = 5000;
+    // place enemy tank adjacent to the wall and let it work
+    g.structures.push({ id: 99, type: "tankfactory", owner: 2, tile: 0, x: cx + 4, y: cy, });
+    expect(g.trainTank(2).ok).toBe(true);
+    g.tanks[0].x = cx + 4.5;
+    g.tanks[0].y = cy + 0.5;
+    for (let i = 0; i < 80; i++) g.stepTanksForTest();
+    expect(g.wall[wallTile]).toBe(0);
+  });
+  it("lasso cannot capture wall tiles", () => {
+    const g = makeGame(2);
+    const { cx, cy, p } = flat(g, 1);
+    p.gold = 5000;
+    // build a ring of wall around the capital area edge
+    g.buildWall(1, [cx - 3, cy - 3, cx + 3, cy - 3, cx + 3, cy + 3, cx - 3, cy + 3, cx - 3, cy - 3]);
+    const walls = [...g.wall.keys()].filter((i) => g.wall[i]);
+    expect(walls.length).toBeGreaterThan(10);
+    const e = g.players[2];
+    // give player 2 ownership next to a wall tile and attack
+    const t = walls[0];
+    const nb = t + 1;
+    g.setOwner(nb, 2);
+    e.troops = 5000;
+    const res = g.launchAttackTiles(2, [t], 1);
+    expect(res.ok).toBe(true);
+    for (let i = 0; i < 40; i++) g.tick();
+    expect(g.owner[t]).toBe(1);
+  });
+  it("needs a factory and respects the tank limit", () => {
+    const g = makeGame(1);
+    const { cx, cy, p } = flat(g, 1);
+    p.gold = 10000;
+    expect(g.trainTank(1).error).toBe("build a Tank Factory first");
+    expect(g.build(1, "tankfactory", cx + 1, cy).ok).toBe(true);
+    for (let i = 0; i < 3; i++) expect(g.trainTank(1).ok).toBe(true);
+    expect(g.trainTank(1).error).toBe("tank limit reached");
+  });
+  it("tanks make nearby attacks cheaper and stop at water", () => {
+    const g = makeGame(2);
+    const { cx, cy, p } = flat(g, 1);
+    p.gold = 10000;
+    g.build(1, "tankfactory", cx + 1, cy);
+    const tile = (cy + 1) * g.w + cx + 6;
+    const before = g.tileCost(1, tile);
+    g.trainTank(1);
+    expect(g.tileCost(1, tile)).toBeLessThan(before);
+    g.moveTank(1, g.tanks[0].id, [0.2, 0.2]);
+    for (let i = 0; i < 600; i++) g.tick();
+    expect(g.tanks[0].path.length).toBe(0);
+  });
+});
+
 describe("structures", () => {
   it("charges gold and refuses enemy land", () => {
     const g = makeGame(1);

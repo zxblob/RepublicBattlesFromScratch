@@ -27,6 +27,16 @@ export interface Structure {
   y: number;
 }
 
+export interface Tank {
+  id: number;
+  owner: number;
+  x: number;
+  y: number;
+  hp: number;
+  /** remaining waypoints in tile coordinates */
+  path: [number, number][];
+}
+
 export interface Attack {
   id: number;
   by: number;
@@ -69,6 +79,9 @@ export class Game {
   readonly structures: Structure[] = [];
   readonly structAt = new Map<number, Structure>();
   readonly attacks: Attack[] = [];
+  readonly tanks: Tank[] = [];
+  /** wall hit points per tile; 0 = no wall. Walls cannot be conquered until broken. */
+  readonly wall: Uint8Array;
   readonly rng: Rng;
   readonly landTiles: number;
 
@@ -82,10 +95,12 @@ export class Game {
   /** tile indices whose owner changed since the server last drained them */
   dirty: number[] = [];
   structDirty = false;
+  wallDirty: number[] = [];
   events: GameEvent[] = [];
 
   private nextAttackId = 1;
   private nextStructId = 1;
+  private nextTankId = 1;
 
   constructor(seed: number, w = 192, h = 112) {
     this.seed = seed;
@@ -94,6 +109,7 @@ export class Game {
     this.rng = mulberry32(seed ^ 0xabcdef);
     this.terrain = generateMap(seed, w, h);
     this.owner = new Uint16Array(w * h);
+    this.wall = new Uint8Array(w * h);
     let land = 0;
     for (let i = 0; i < this.terrain.length; i++) if (this.terrain[i] !== Terrain.Water) land++;
     this.landTiles = land;
@@ -273,6 +289,11 @@ export class Game {
       if (this.inRange(o, "bunker", tx, ty)) cost *= CFG.structures.bunker.mult;
     }
     if (this.inRange(attacker, "barracks", tx, ty)) cost *= CFG.structures.barracks.mult;
+    for (const k of this.tanks) {
+      if (k.owner !== attacker) continue;
+      const dx = k.x - tx, dy = k.y - ty;
+      if (dx * dx + dy * dy <= CFG.tankRange * CFG.tankRange) { cost *= CFG.tankMult; break; }
+    }
     return cost;
   }
 
@@ -372,7 +393,7 @@ export class Game {
       if (this.owner[t] === a.by) { a.tiles.delete(t); continue; }
       sx += t % this.w;
       sy += (t / this.w) | 0;
-      if (this.touches(t, a.by)) frontier.push(t);
+      if (!this.wall[t] && this.touches(t, a.by)) frontier.push(t);
     }
     if (a.tiles.size === 0) return this.endAttack(a);
     a.cx = sx / a.tiles.size + 0.5;
@@ -409,6 +430,8 @@ export class Game {
     p.capital = -1;
     for (const s of this.structures.filter((x) => x.owner === p.id)) this.removeStructure(s);
     for (const a of this.attacks.filter((x) => x.by === p.id)) this.endAttack(a);
+    for (let i = this.tanks.length - 1; i >= 0; i--) if (this.tanks[i].owner === p.id) this.tanks.splice(i, 1);
+    for (let i = 0; i < this.wall.length; i++) if (this.wall[i] && this.owner[i] === 0) { this.wall[i] = 0; this.wallDirty.push(i); }
     this.events.push({ k: "elim", id: p.id, by });
   }
 
@@ -436,6 +459,123 @@ export class Game {
     return { ok: true, data: { id: s.id } };
   }
 
+  // ---- walls and tanks ------------------------------------------------------------------------
+
+  /** Draw a wall along a polyline (tile coordinates). Charges per new tile; stops when gold runs out. */
+  buildWall(pid: number, pts: ArrayLike<number>): Result<{ placed: number }> {
+    const p = this.players[pid];
+    if (!p || !p.alive || this.over) return { ok: false, error: "not in game" };
+    if (this.spawnTicks > 0) return { ok: false, error: "choose your start first" };
+    if (pts.length < 4 || pts.length > CFG.maxPolyPoints * 2) return { ok: false, error: "bad shape" };
+    for (let i = 0; i < pts.length; i++) if (!Number.isFinite(pts[i])) return { ok: false, error: "bad shape" };
+    const seen = new Set<number>();
+    const tiles: number[] = [];
+    const add = (x: number, y: number) => {
+      if (x < 0 || y < 0 || x >= this.w || y >= this.h) return;
+      const t = y * this.w + x;
+      if (!seen.has(t)) { seen.add(t); tiles.push(t); }
+    };
+    for (let i = 0; i + 3 < pts.length; i += 2) {
+      let x0 = Math.floor(pts[i]), y0 = Math.floor(pts[i + 1]);
+      const x1 = Math.floor(pts[i + 2]), y1 = Math.floor(pts[i + 3]);
+      const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+      let err = dx + dy;
+      for (let guard = 0; guard < 1000; guard++) {
+        add(x0, y0);
+        if (x0 === x1 && y0 === y1) break;
+        const e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+      }
+    }
+    let placed = 0;
+    for (const t of tiles) {
+      if (placed >= CFG.maxWallTilesPerDraw) break;
+      if (this.owner[t] !== pid || this.terrain[t] !== Terrain.Land || this.structAt.has(t) || this.wall[t]) continue;
+      if (p.gold < CFG.wallTileCost) break;
+      p.gold -= CFG.wallTileCost;
+      this.wall[t] = CFG.wallHp;
+      this.wallDirty.push(t);
+      placed++;
+    }
+    if (!placed) return { ok: false, error: p.gold < CFG.wallTileCost ? "not enough gold" : "walls go on your own flat land" };
+    return { ok: true, data: { placed } };
+  }
+
+  trainTank(pid: number): Result<{ id: number }> {
+    const p = this.players[pid];
+    if (!p || !p.alive || this.over) return { ok: false, error: "not in game" };
+    if (this.spawnTicks > 0) return { ok: false, error: "choose your start first" };
+    const factories = this.structures.filter((s) => s.owner === pid && s.type === "tankfactory");
+    if (!factories.length) return { ok: false, error: "build a Tank Factory first" };
+    const mine = this.tanks.filter((k) => k.owner === pid).length;
+    if (mine >= factories.length * CFG.tanksPerFactory) return { ok: false, error: "tank limit reached" };
+    if (p.gold < CFG.tankCost) return { ok: false, error: "not enough gold" };
+    p.gold -= CFG.tankCost;
+    const f = factories[mine % factories.length];
+    const k: Tank = { id: this.nextTankId++, owner: pid, x: f.x + 0.5, y: f.y + 0.5, hp: CFG.tankHp, path: [] };
+    this.tanks.push(k);
+    return { ok: true, data: { id: k.id } };
+  }
+
+  moveTank(pid: number, id: number, pts: ArrayLike<number>): Result {
+    const k = this.tanks.find((x) => x.id === id && x.owner === pid);
+    if (!k) return { ok: false, error: "tank not found" };
+    const n = Math.min((pts.length / 2) | 0, CFG.maxTankPathPoints);
+    const path: [number, number][] = [];
+    for (let i = 0; i < n; i++) {
+      const x = pts[i * 2], y = pts[i * 2 + 1];
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, error: "bad path" };
+      path.push([Math.max(0, Math.min(this.w - 0.01, x)), Math.max(0, Math.min(this.h - 0.01, y))]);
+    }
+    k.path = path;
+    return { ok: true };
+  }
+
+  /** exposed for tests */
+  stepTanksForTest(): void { this.stepTanks(); }
+
+  private stepTanks(): void {
+    for (let i = this.tanks.length - 1; i >= 0; i--) {
+      const k = this.tanks[i];
+      const target = k.path[0];
+      if (target) {
+        const dx = target[0] - k.x, dy = target[1] - k.y;
+        const dist = Math.hypot(dx, dy);
+        const nx = dist <= CFG.tankSpeed ? target[0] : k.x + (dx / dist) * CFG.tankSpeed;
+        const ny = dist <= CFG.tankSpeed ? target[1] : k.y + (dy / dist) * CFG.tankSpeed;
+        const t = this.terrain[Math.floor(ny) * this.w + Math.floor(nx)];
+        if (t === Terrain.Water || t === Terrain.Mountain) k.path = [];
+        else {
+          k.x = nx;
+          k.y = ny;
+          if (dist <= CFG.tankSpeed) k.path.shift();
+        }
+      }
+      const tx = Math.floor(k.x), ty = Math.floor(k.y);
+      // break the weakest-to-reach enemy wall next to us
+      let bestWall = -1, bestD = 1e9;
+      for (let yy = ty - 1; yy <= ty + 1; yy++) {
+        for (let xx = tx - 1; xx <= tx + 1; xx++) {
+          if (xx < 0 || yy < 0 || xx >= this.w || yy >= this.h) continue;
+          const t = yy * this.w + xx;
+          if (!this.wall[t] || this.owner[t] === k.owner) continue;
+          const d = (xx + 0.5 - k.x) ** 2 + (yy + 0.5 - k.y) ** 2;
+          if (d < bestD) { bestD = d; bestWall = t; }
+        }
+      }
+      if (bestWall >= 0) {
+        this.wall[bestWall] = Math.max(0, this.wall[bestWall] - CFG.tankWallDmg);
+        this.wallDirty.push(bestWall);
+      }
+      const o = this.owner[ty * this.w + tx];
+      if (o !== 0 && o !== k.owner) {
+        k.hp -= CFG.tankOverrunDmg;
+        if (k.hp <= 0) this.tanks.splice(i, 1);
+      }
+    }
+  }
+
   // ---- tick -----------------------------------------------------------------------------------
 
   tick(): void {
@@ -443,6 +583,7 @@ export class Game {
     this.tickNo++;
     if (this.spawnTicks > 0) { this.spawnTicks--; return; }
     for (const a of [...this.attacks]) this.stepAttack(a);
+    this.stepTanks();
 
     const banks = new Map<number, number>();
     for (const s of this.structures) if (s.type === "bank") banks.set(s.owner, (banks.get(s.owner) ?? 0) + 1);
