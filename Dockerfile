@@ -12,5 +12,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 EXPOSE 3000
+RUN mkdir -p /app/data && chown node:node /app/data
+VOLUME /app/data
 USER node
 CMD ["node", "dist/server.js"]

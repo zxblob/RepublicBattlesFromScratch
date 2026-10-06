@@ -158,3 +158,37 @@ describe("naval", () => {
     expect(g.terrain[Math.floor(k.y) * g.w + Math.floor(k.x)]).toBe(Terrain.Water);
   });
 });
+
+describe("War of the Worlds", () => {
+  it("planets start at war, apply modifiers and use the space techs", () => {
+    const g = new Game(33, 160, 96, { mode: "wow", planet: "frozen" });
+    g.addPlayer("A", false);
+    g.addPlayer("Xeno", true);
+    g.spawnAll();
+    expect(g.phase).toBe("war");
+    const a = g.players[1];
+    const tile = g.players[2].capital + 3;
+    g.setOwner(tile, 2);
+    const base = g.tileCost(1, tile);
+    a.tech.push("space2");
+    expect(g.tileCost(1, tile)).toBeCloseTo(base * 0.8);
+    g.players[2].tech.push("space3");
+    expect(g.tileCost(1, tile)).toBeCloseTo(base * 0.8 * 1.3);
+  });
+  it("earth reaches the space phase when a power dominates, and launching needs a spaceport", () => {
+    const g = make(3, { mode: "wow" }, 14);
+    g.phase = "war";
+    // hand most land to player 1
+    for (let t = 0; t < g.owner.length && g.players[1].tiles < g.landTiles * 0.6; t++) {
+      if (g.terrain[t] !== Terrain.Water && g.owner[t] === 0) g.setOwner(t, 1);
+    }
+    for (let i = 0; i < 12; i++) g.tick();
+    expect(g.phase).toBe("space");
+    expect(g.canLaunch(1)).toBe(false);
+    g.players[1].tech.push("space1");
+    g.players[1].gold = 1e6;
+    const x = g.players[1].capital % g.w + 1, y = (g.players[1].capital / g.w) | 0;
+    expect(g.build(1, "spaceport", x, y).ok).toBe(true);
+    expect(g.canLaunch(1)).toBe(true);
+  });
+});

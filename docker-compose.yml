@@ -4,3 +4,8 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    volumes:
+      - rb-data:/app/data
+
+volumes:
+  rb-data:

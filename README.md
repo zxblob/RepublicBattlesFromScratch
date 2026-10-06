@@ -24,6 +24,17 @@ Written from scratch (TypeScript, Node, WebSocket, Canvas). MIT licensed.
 | Touch | **Draw** toggle, or long-press then drag | one finger | pinch |
 | Mouse | left-drag | right/middle/shift-drag | wheel |
 
+## Modes and features
+
+- **Modes:** Free for all, Teams (2–6), **World War** (expand, then a Cold War countdown when a few powers hold ~70% of the land: bots stop attacking, research opens, then war resumes), and **War of the Worlds** (after the war, a dominant side researches Rocketry, builds a Spaceport and launches to a random planet with alien nations; frozen, volcanic and desert planets change the rules).
+- **Alliances** in free-for-all (both sides must agree; bots sometimes accept) and fixed teams in team mode. Allied land cannot be attacked.
+- **Buildings:** Bunker, Barracks, Bank, Radar, Port, City, Farm, Research Lab, SAM Launcher, Missile Silo, Tank Factory, Airbase, Spaceport, plus drawable Walls.
+- **Units:** tanks, fighters, bombers, transports (land troops from the sea) and warships. **Missiles** from silos can be shot down by SAMs.
+- **Research:** Economy, Military, Defence (and Space) branches, per player, permanent for the match.
+- **Maps:** small to huge (1024×640) procedural maps, an Islands option, and custom maps from the in-browser **map editor** (`/editor.html`, Pencil supported). Publish to get a code, enter it when starting a game.
+- **Country image:** upload a picture that is tiled over your land.
+- **Save games:** the server saves running games to `data/saves` (autosave, host's 💾 button, and on shutdown). After a restart a saved game comes back **paused** under the same lobby code; players reconnect and the host presses play.
+
 ## Not getting steamrolled
 
 Nations are aggressive, but there are guard rails (all in `src/core/config.ts`):
@@ -42,7 +53,7 @@ npm test           # simulation tests
 npm run typecheck
 ```
 
-`PORT` sets the port. `RB_START_GOLD` (sim units, shown x100) gives everyone starting gold, handy for testing. The server serves the client and the WebSocket at `/ws` from one process.
+`PORT` sets the port. `SAVE_DIR` and `MAPS_DIR` (default `data/saves`, `data/maps`) hold saved games and published maps; mount `data/` as a volume when using Docker. `RB_START_GOLD` (sim units, shown x100) gives everyone starting gold, handy for testing. The server serves the client and the WebSocket at `/ws` from one process.
 
 ## Self-host
 
@@ -70,4 +81,4 @@ that prefix to the server and strip it.
 - `src/core` deterministic simulation (map, combat, bots, structures), shared by server and client
 - `src/server` HTTP + WebSocket rooms, 10 ticks/s, authoritative
 - `src/client` canvas renderer, pointer/pen input, UI
-- Not yet built: ships, research modes, custom map creator (see `docs/ROADMAP.md`).
+- Known limits: bots don't use tanks, aircraft or missiles; no fog of war; huge maps send every change to every player (fine for LAN-size groups).

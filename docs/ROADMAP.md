@@ -51,3 +51,12 @@ Order: attack-feel/range polish → units → World War mode → persistence →
 - Decision: owner wants all of these eventually. Suggested grouping: Economy (Port, City, Factory, Trade Ship, Train),
   Defence (Bunker, SAM, Wall), Offence (Tank, Airbase, Warship, Transport, nukes), Diplomacy (alliances, teams).
 - Done: spawn-selection phase (20 s, Ready button). Next small items: real-world-style map presets, pause/restart/settings menu.
+
+
+## Status (all phases implemented in first form)
+Done: attack feel (reinforce/retreat), spawn phase, tanks + walls, airbase/fighters/bombers/SAM, economy buildings
+(port, city, farm, lab), missile silo + missiles, transports/warships/islands, teams + alliances, World War mode with
+Cold War + research, War of the Worlds (space race, planets), save games + restart resume, huge maps, map editor,
+country image.
+Follow-ups: bots using tanks/air/missiles, fog of war (rejected for now), interest management for very large maps,
+image moderation tools, a stalemate breaker for two equal powers.
