@@ -152,10 +152,10 @@ describe("tanks and walls", () => {
     e.gold = 5000;
     // place enemy tank adjacent to the wall and let it work
     g.structures.push({ id: 99, type: "tankfactory", owner: 2, tile: 0, x: cx + 4, y: cy, });
-    expect(g.trainTank(2).ok).toBe(true);
-    g.tanks[0].x = cx + 4.5;
-    g.tanks[0].y = cy + 0.5;
-    for (let i = 0; i < 80; i++) g.stepTanksForTest();
+    expect(g.trainUnit(2, "t").ok).toBe(true);
+    g.units[0].x = cx + 4.5;
+    g.units[0].y = cy + 0.5;
+    for (let i = 0; i < 80; i++) g.stepUnitsForTest();
     expect(g.wall[wallTile]).toBe(0);
   });
   it("lasso cannot capture wall tiles", () => {
@@ -181,10 +181,10 @@ describe("tanks and walls", () => {
     const g = makeGame(1);
     const { cx, cy, p } = flat(g, 1);
     p.gold = 10000;
-    expect(g.trainTank(1).error).toBe("build a Tank Factory first");
+    expect(g.trainUnit(1, "t").error).toBe("build a Tank Factory first");
     expect(g.build(1, "tankfactory", cx + 1, cy).ok).toBe(true);
-    for (let i = 0; i < 3; i++) expect(g.trainTank(1).ok).toBe(true);
-    expect(g.trainTank(1).error).toBe("tank limit reached");
+    for (let i = 0; i < 3; i++) expect(g.trainUnit(1, "t").ok).toBe(true);
+    expect(g.trainUnit(1, "t").error).toBe("tank limit reached");
   });
   it("tanks make nearby attacks cheaper and stop at water", () => {
     const g = makeGame(2);
@@ -193,11 +193,82 @@ describe("tanks and walls", () => {
     g.build(1, "tankfactory", cx + 1, cy);
     const tile = (cy + 1) * g.w + cx + 6;
     const before = g.tileCost(1, tile);
-    g.trainTank(1);
+    g.trainUnit(1, "t");
     expect(g.tileCost(1, tile)).toBeLessThan(before);
-    g.moveTank(1, g.tanks[0].id, [0.2, 0.2]);
+    g.moveUnit(1, g.units[0].id, [0.2, 0.2]);
     for (let i = 0; i < 600; i++) g.tick();
-    expect(g.tanks[0].path.length).toBe(0);
+    expect(g.units[0].path.length).toBe(0);
+  });
+});
+
+describe("aircraft and SAMs", () => {
+  function rich(g: Game, pid: number) {
+    const p = g.players[pid];
+    p.gold = 100000;
+    return { cx: p.capital % g.w, cy: (p.capital / g.w) | 0 };
+  }
+  it("airbase trains fighters and bombers up to the limit", () => {
+    const g = makeGame(1);
+    const { cx, cy } = rich(g, 1);
+    expect(g.trainUnit(1, "f").error).toBe("build an Airbase first");
+    expect(g.build(1, "airbase", cx + 1, cy).ok).toBe(true);
+    for (let i = 0; i < CFG.planesPerBase; i++) expect(g.trainUnit(1, "f").ok).toBe(true);
+    expect(g.trainUnit(1, "f").error).toBe("aircraft limit reached");
+    expect(g.trainUnit(1, "b").ok).toBe(true);
+  });
+  it("aircraft fly over water and mountains", () => {
+    const g = makeGame(1);
+    const { cx, cy } = rich(g, 1);
+    g.build(1, "airbase", cx + 1, cy);
+    const id = g.trainUnit(1, "f").data!.id;
+    g.moveUnit(1, id, [0.5, 0.5]);
+    for (let i = 0; i < 400; i++) g.tick();
+    const f = g.units.find((u) => u.id === id)!;
+    expect(f.path.length).toBe(0);
+    expect(Math.hypot(f.x - 0.5, f.y - 0.5)).toBeLessThan(1);
+  });
+  it("SAMs shoot down enemy aircraft in range but not their own", () => {
+    const g = makeGame(2);
+    const { cx, cy } = rich(g, 1);
+    rich(g, 2);
+    g.build(1, "sam", cx + 1, cy);
+    g.structures.push({ id: 90, type: "airbase", owner: 2, tile: 1, x: cx + 3, y: cy });
+    const enemy = g.trainUnit(2, "b").data!.id;
+    const own = g.structures.some((s) => s.owner === 1);
+    expect(own).toBe(true);
+    const u = g.units.find((x) => x.id === enemy)!;
+    u.x = cx + 7.5; u.y = cy + 0.5; // outside the start patch (no bombing), inside SAM range
+    for (let i = 0; i < 40; i++) g.stepUnitsForTest();
+    expect(g.units.find((x) => x.id === enemy)).toBeUndefined();
+  });
+  it("fighters kill enemy aircraft nearby", () => {
+    const g = makeGame(2);
+    const { cx, cy } = rich(g, 1);
+    rich(g, 2);
+    g.structures.push({ id: 91, type: "airbase", owner: 1, tile: 2, x: cx + 3, y: cy });
+    g.structures.push({ id: 92, type: "airbase", owner: 2, tile: 3, x: cx + 3, y: cy + 1 });
+    const a = g.trainUnit(1, "f").data!.id;
+    const b = g.trainUnit(2, "b").data!.id;
+    for (let i = 0; i < 40; i++) g.stepUnitsForTest();
+    expect(g.units.find((x) => x.id === b)).toBeUndefined();
+    expect(g.units.find((x) => x.id === a)).toBeDefined();
+  });
+  it("bombers destroy enemy structures under them and lose ammo", () => {
+    const g = makeGame(2);
+    const { cx, cy } = rich(g, 1);
+    const e = g.players[2];
+    const ex = e.capital % g.w, ey = (e.capital / g.w) | 0;
+    rich(g, 2);
+    g.build(2, "bunker", ex + 1, ey);
+    g.structures.push({ id: 93, type: "airbase", owner: 1, tile: 4, x: cx + 3, y: cy });
+    const id = g.trainUnit(1, "b").data!.id;
+    const u = g.units.find((x) => x.id === id)!;
+    u.x = ex + 1.5; u.y = ey + 0.5;
+    const before = e.troops;
+    g.stepUnitsForTest();
+    expect(g.structures.some((s) => s.owner === 2 && s.type === "bunker")).toBe(false);
+    expect(u.ammo).toBe(CFG.bomberAmmo - 1);
+    expect(e.troops).toBeLessThan(before);
   });
 });
 

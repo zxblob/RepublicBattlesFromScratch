@@ -52,6 +52,8 @@ export const CFG = {
     barracks: { cost: 150, range: 9, label: "Barracks", desc: "Your attacks in range cost 25% less", mult: 0.75 },
     bank: { cost: 200, range: 0, label: "Bank", desc: "Extra gold income", mult: 1 },
     tankfactory: { cost: 150, range: 0, label: "Tank Factory", desc: "Lets you train tanks (max 3 per factory)", mult: 1 },
+    airbase: { cost: 200, range: 0, label: "Airbase", desc: "Trains Fighters and Bombers (max 3 of each per base)", mult: 1 },
+    sam: { cost: 180, range: 9, label: "SAM Launcher", desc: "Shoots down enemy aircraft in range", mult: 1 },
     radar: { cost: 120, range: 14, label: "Radar", desc: "Reveals enemy attack fronts and troop counts", mult: 1 },
   },
   structCostGrowth: 1.25,
@@ -69,6 +71,22 @@ export const CFG = {
   wallHp: 150,
   maxWallTilesPerDraw: 80,
   maxTankPathPoints: 60,
+
+  // aircraft
+  fighterCost: 50,
+  bomberCost: 80,
+  planesPerBase: 3,
+  fighterSpeed: 0.8,
+  bomberSpeed: 0.5,
+  fighterHp: 100,
+  bomberHp: 60,
+  fighterDmg: 4, // hp per tick to enemy aircraft within fighterRange
+  fighterRange: 2.5,
+  samDmg: 2.5, // hp per tick to enemy aircraft inside a SAM's range
+  bomberAmmo: 3,
+  bombCooldown: 12,
+  bombRadius: 2,
+  bombTroopShare: 0.04,
 } as const;
 
 export type StructType = keyof typeof CFG.structures;

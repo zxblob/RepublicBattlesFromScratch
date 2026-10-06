@@ -90,7 +90,9 @@ $("wall").onclick = () => {
   $("wall").classList.toggle("on", ov.wallDraft);
   if (ov.wallDraft) toast("Draw a line on your own land to build a wall");
 };
-$("train").onclick = () => net.send({ t: "train" });
+$("train").onclick = () => net.send({ t: "train", kind: "t" });
+$("train-f").onclick = () => net.send({ t: "train", kind: "f" });
+$("train-b").onclick = () => net.send({ t: "train", kind: "b" });
 $("pause").onclick = () => net.send({ t: "pause" });
 $("cancel").onclick = () => { for (const a of game?.attacks ?? []) if (a.by === game!.you) net.send({ t: "cancel", id: a.id }); };
 
@@ -208,6 +210,11 @@ function hud(): void {
   const hasFactory = game.structs.some((s) => s.owner === game!.you && s.type === "tankfactory");
   $("train").classList.toggle("hidden", !hasFactory);
   setText($("train"), `Tank · ${fmt(CFG.tankCost)}`);
+  const hasAirbase = game.structs.some((s) => s.owner === game!.you && s.type === "airbase");
+  $("train-f").classList.toggle("hidden", !hasAirbase);
+  $("train-b").classList.toggle("hidden", !hasAirbase);
+  setText($("train-f"), `Fighter · ${fmt(CFG.fighterCost)}`);
+  setText($("train-b"), `Bomber · ${fmt(CFG.bomberCost)}`);
   if (ov.selTank && !game.units.some((u) => u.id === ov.selTank)) ov.selTank = 0;
   $("cancel").classList.toggle("hidden", !game.attacks.some((a) => a.by === game!.you));
   $("pause").classList.toggle("hidden", !isHost);

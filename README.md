@@ -12,6 +12,7 @@ Written from scratch (TypeScript, Node, WebSocket, Canvas). MIT licensed.
   scaled by the *Troops per attack* slider.
 - **Build:** Bunker (defence), Barracks (cheaper attacks), Bank (gold), Radar (shows enemy attack fronts), Tank Factory.
 - **Tanks:** train at a factory, tap one to select, then draw its route (or tap a spot). Tanks make your attacks nearby cheaper and break enemy walls; they can't cross water or mountains and die on enemy land.
+- **Aircraft:** an Airbase trains Fighters (kill enemy aircraft nearby) and Bombers (3 bombs each: they wreck enemy structures and walls under them and cut the defender's troops; they fly home to rearm). Aircraft fly over water and mountains. SAM Launchers shoot down enemy aircraft in range.
 - **Walls:** press Wall, then draw a line on your own flat land. Attacks can't capture wall tiles until a tank breaks them. Hover or tap a
   structure to see its range ring.
 
@@ -69,4 +70,4 @@ that prefix to the server and strip it.
 - `src/core` deterministic simulation (map, combat, bots, structures), shared by server and client
 - `src/server` HTTP + WebSocket rooms, 10 ticks/s, authoritative
 - `src/client` canvas renderer, pointer/pen input, UI
-- Not yet built: planes, ships, research modes, custom map creator (see `docs/ROADMAP.md`).
+- Not yet built: ships, research modes, custom map creator (see `docs/ROADMAP.md`).

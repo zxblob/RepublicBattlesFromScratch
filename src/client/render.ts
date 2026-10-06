@@ -5,7 +5,7 @@ import type { ClientGame } from "./state";
 
 export interface Camera { x: number; y: number; zoom: number }
 
-const GLYPH: Record<StructType, string> = { bunker: "B", barracks: "K", bank: "$", radar: "R", tankfactory: "T" };
+const GLYPH: Record<StructType, string> = { bunker: "B", barracks: "K", bank: "$", radar: "R", tankfactory: "T", airbase: "A", sam: "S" };
 
 function mix(a: number, b: number, t: number): number {
   const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
@@ -206,13 +206,26 @@ export class Renderer {
         ctx.setLineDash([]);
       }
       ctx.fillStyle = p ? css(mix(p.color, 0x000000, 0.25)) : "#444";
-      ctx.fillRect(u.x - r, u.y - r * 0.7, r * 2, r * 1.4);
       ctx.lineWidth = Math.max(0.12, (sel ? 3 : 1.5) / cam.zoom);
       ctx.strokeStyle = sel ? "#ffe678" : "#fff";
-      ctx.strokeRect(u.x - r, u.y - r * 0.7, r * 2, r * 1.4);
+      if (u.k === "t") {
+        ctx.fillRect(u.x - r, u.y - r * 0.7, r * 2, r * 1.4);
+        ctx.strokeRect(u.x - r, u.y - r * 0.7, r * 2, r * 1.4);
+      } else {
+        // aircraft: bigger arrow shapes so they stay readable when zoomed out; bombers are wider
+        const rr = r * 1.25, wide = u.k === "b" ? 1.1 : 0.7;
+        ctx.beginPath();
+        ctx.moveTo(u.x, u.y - rr);
+        ctx.lineTo(u.x + rr * wide, u.y + rr * 0.8);
+        ctx.lineTo(u.x, u.y + rr * 0.35);
+        ctx.lineTo(u.x - rr * wide, u.y + rr * 0.8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
       ctx.fillStyle = "#fff";
-      ctx.font = `bold ${r * 1.1}px sans-serif`;
-      ctx.fillText("T", u.x, u.y + 0.05);
+      ctx.font = `bold ${r * 0.95}px sans-serif`;
+      ctx.fillText(u.k === "t" ? "T" : u.k === "f" ? "F" : String(u.ammo), u.x, u.y + (u.k === "t" ? 0.05 : r * 0.25));
     }
 
     // range ring

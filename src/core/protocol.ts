@@ -6,6 +6,9 @@ export interface UnitInfo {
   x: number;
   y: number;
   hp: number;
+  /** t = tank, f = fighter, b = bomber */
+  k: "t" | "f" | "b";
+  ammo: number;
   /** final waypoint, or -1 when idle */
   tx: number;
   ty: number;
@@ -60,7 +63,7 @@ export type ClientMsg =
   | { t: "cancel"; id: number }
   | { t: "spawn"; x: number; y: number }
   | { t: "wall"; pts: number[] }
-  | { t: "train" }
+  | { t: "train"; kind: "t" | "f" | "b" }
   | { t: "move"; id: number; pts: number[] }
   | { t: "ready" }
   | { t: "reinforce"; id: number; ratio: number }

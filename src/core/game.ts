@@ -27,9 +27,14 @@ export interface Structure {
   y: number;
 }
 
-export interface Tank {
+export type UnitKind = "t" | "f" | "b"; // tank, fighter, bomber
+
+export interface Unit {
   id: number;
+  kind: UnitKind;
   owner: number;
+  ammo: number;
+  cd: number;
   x: number;
   y: number;
   hp: number;
@@ -79,7 +84,7 @@ export class Game {
   readonly structures: Structure[] = [];
   readonly structAt = new Map<number, Structure>();
   readonly attacks: Attack[] = [];
-  readonly tanks: Tank[] = [];
+  readonly units: Unit[] = [];
   /** wall hit points per tile; 0 = no wall. Walls cannot be conquered until broken. */
   readonly wall: Uint8Array;
   readonly rng: Rng;
@@ -100,7 +105,7 @@ export class Game {
 
   private nextAttackId = 1;
   private nextStructId = 1;
-  private nextTankId = 1;
+  private nextUnitId = 1;
 
   constructor(seed: number, w = 192, h = 112) {
     this.seed = seed;
@@ -289,8 +294,8 @@ export class Game {
       if (this.inRange(o, "bunker", tx, ty)) cost *= CFG.structures.bunker.mult;
     }
     if (this.inRange(attacker, "barracks", tx, ty)) cost *= CFG.structures.barracks.mult;
-    for (const k of this.tanks) {
-      if (k.owner !== attacker) continue;
+    for (const k of this.units) {
+      if (k.owner !== attacker || k.kind !== "t") continue;
       const dx = k.x - tx, dy = k.y - ty;
       if (dx * dx + dy * dy <= CFG.tankRange * CFG.tankRange) { cost *= CFG.tankMult; break; }
     }
@@ -430,7 +435,7 @@ export class Game {
     p.capital = -1;
     for (const s of this.structures.filter((x) => x.owner === p.id)) this.removeStructure(s);
     for (const a of this.attacks.filter((x) => x.by === p.id)) this.endAttack(a);
-    for (let i = this.tanks.length - 1; i >= 0; i--) if (this.tanks[i].owner === p.id) this.tanks.splice(i, 1);
+    for (let i = this.units.length - 1; i >= 0; i--) if (this.units[i].owner === p.id) this.units.splice(i, 1);
     for (let i = 0; i < this.wall.length; i++) if (this.wall[i] && this.owner[i] === 0) { this.wall[i] = 0; this.wallDirty.push(i); }
     this.events.push({ k: "elim", id: p.id, by });
   }
@@ -502,25 +507,33 @@ export class Game {
     return { ok: true, data: { placed } };
   }
 
-  trainTank(pid: number): Result<{ id: number }> {
+  trainUnit(pid: number, kind: UnitKind): Result<{ id: number }> {
     const p = this.players[pid];
     if (!p || !p.alive || this.over) return { ok: false, error: "not in game" };
     if (this.spawnTicks > 0) return { ok: false, error: "choose your start first" };
-    const factories = this.structures.filter((s) => s.owner === pid && s.type === "tankfactory");
-    if (!factories.length) return { ok: false, error: "build a Tank Factory first" };
-    const mine = this.tanks.filter((k) => k.owner === pid).length;
-    if (mine >= factories.length * CFG.tanksPerFactory) return { ok: false, error: "tank limit reached" };
-    if (p.gold < CFG.tankCost) return { ok: false, error: "not enough gold" };
-    p.gold -= CFG.tankCost;
-    const f = factories[mine % factories.length];
-    const k: Tank = { id: this.nextTankId++, owner: pid, x: f.x + 0.5, y: f.y + 0.5, hp: CFG.tankHp, path: [] };
-    this.tanks.push(k);
+    const building = kind === "t" ? "tankfactory" : "airbase";
+    if (kind !== "t" && kind !== "f" && kind !== "b") return { ok: false, error: "unknown unit" };
+    const bases = this.structures.filter((s) => s.owner === pid && s.type === building);
+    if (!bases.length) return { ok: false, error: kind === "t" ? "build a Tank Factory first" : "build an Airbase first" };
+    const mine = this.units.filter((k) => k.owner === pid && k.kind === kind).length;
+    const per = kind === "t" ? CFG.tanksPerFactory : CFG.planesPerBase;
+    if (mine >= bases.length * per) return { ok: false, error: kind === "t" ? "tank limit reached" : "aircraft limit reached" };
+    const cost = kind === "t" ? CFG.tankCost : kind === "f" ? CFG.fighterCost : CFG.bomberCost;
+    if (p.gold < cost) return { ok: false, error: "not enough gold" };
+    p.gold -= cost;
+    const b = bases[mine % bases.length];
+    const k: Unit = {
+      id: this.nextUnitId++, kind, owner: pid, x: b.x + 0.5, y: b.y + 0.5, path: [],
+      hp: kind === "t" ? CFG.tankHp : kind === "f" ? CFG.fighterHp : CFG.bomberHp,
+      ammo: kind === "b" ? CFG.bomberAmmo : 0, cd: 0,
+    };
+    this.units.push(k);
     return { ok: true, data: { id: k.id } };
   }
 
-  moveTank(pid: number, id: number, pts: ArrayLike<number>): Result {
-    const k = this.tanks.find((x) => x.id === id && x.owner === pid);
-    if (!k) return { ok: false, error: "tank not found" };
+  moveUnit(pid: number, id: number, pts: ArrayLike<number>): Result {
+    const k = this.units.find((x) => x.id === id && x.owner === pid);
+    if (!k) return { ok: false, error: "unit not found" };
     const n = Math.min((pts.length / 2) | 0, CFG.maxTankPathPoints);
     const path: [number, number][] = [];
     for (let i = 0; i < n; i++) {
@@ -533,46 +546,111 @@ export class Game {
   }
 
   /** exposed for tests */
-  stepTanksForTest(): void { this.stepTanks(); }
+  stepUnitsForTest(): void { this.stepUnits(); }
 
-  private stepTanks(): void {
-    for (let i = this.tanks.length - 1; i >= 0; i--) {
-      const k = this.tanks[i];
+  private stepUnits(): void {
+    for (let i = this.units.length - 1; i >= 0; i--) {
+      const k = this.units[i];
+      const air = k.kind !== "t";
+      const speed = k.kind === "t" ? CFG.tankSpeed : k.kind === "f" ? CFG.fighterSpeed : CFG.bomberSpeed;
       const target = k.path[0];
       if (target) {
         const dx = target[0] - k.x, dy = target[1] - k.y;
         const dist = Math.hypot(dx, dy);
-        const nx = dist <= CFG.tankSpeed ? target[0] : k.x + (dx / dist) * CFG.tankSpeed;
-        const ny = dist <= CFG.tankSpeed ? target[1] : k.y + (dy / dist) * CFG.tankSpeed;
+        const nx = dist <= speed ? target[0] : k.x + (dx / dist) * speed;
+        const ny = dist <= speed ? target[1] : k.y + (dy / dist) * speed;
         const t = this.terrain[Math.floor(ny) * this.w + Math.floor(nx)];
-        if (t === Terrain.Water || t === Terrain.Mountain) k.path = [];
+        if (!air && (t === Terrain.Water || t === Terrain.Mountain)) k.path = [];
         else {
           k.x = nx;
           k.y = ny;
-          if (dist <= CFG.tankSpeed) k.path.shift();
+          if (dist <= speed) k.path.shift();
         }
       }
       const tx = Math.floor(k.x), ty = Math.floor(k.y);
-      // break the weakest-to-reach enemy wall next to us
-      let bestWall = -1, bestD = 1e9;
-      for (let yy = ty - 1; yy <= ty + 1; yy++) {
-        for (let xx = tx - 1; xx <= tx + 1; xx++) {
-          if (xx < 0 || yy < 0 || xx >= this.w || yy >= this.h) continue;
-          const t = yy * this.w + xx;
-          if (!this.wall[t] || this.owner[t] === k.owner) continue;
-          const d = (xx + 0.5 - k.x) ** 2 + (yy + 0.5 - k.y) ** 2;
-          if (d < bestD) { bestD = d; bestWall = t; }
+      if (k.kind === "t") this.tankActions(k, tx, ty, i);
+      else if (k.kind === "b") this.bomberActions(k, tx, ty);
+    }
+    // air combat: SAMs and fighters
+    for (const k of this.units) {
+      if (k.kind === "t") continue;
+      for (const s of this.structures) {
+        if (s.type !== "sam" || s.owner === k.owner) continue;
+        const r = CFG.structures.sam.range;
+        if ((s.x + 0.5 - k.x) ** 2 + (s.y + 0.5 - k.y) ** 2 <= r * r) k.hp -= CFG.samDmg;
+      }
+      if (k.kind === "f") {
+        for (const q of this.units) {
+          if (q.kind === "t" || q.owner === k.owner) continue;
+          if ((q.x - k.x) ** 2 + (q.y - k.y) ** 2 <= CFG.fighterRange ** 2) q.hp -= CFG.fighterDmg;
         }
       }
-      if (bestWall >= 0) {
-        this.wall[bestWall] = Math.max(0, this.wall[bestWall] - CFG.tankWallDmg);
-        this.wallDirty.push(bestWall);
+    }
+    for (let i = this.units.length - 1; i >= 0; i--) if (this.units[i].hp <= 0) this.units.splice(i, 1);
+  }
+
+  private tankActions(k: Unit, tx: number, ty: number, idx: number): void {
+    // break the nearest enemy wall tile next to us
+    let bestWall = -1, bestD = 1e9;
+    for (let yy = ty - 1; yy <= ty + 1; yy++) {
+      for (let xx = tx - 1; xx <= tx + 1; xx++) {
+        if (xx < 0 || yy < 0 || xx >= this.w || yy >= this.h) continue;
+        const t = yy * this.w + xx;
+        if (!this.wall[t] || this.owner[t] === k.owner) continue;
+        const d = (xx + 0.5 - k.x) ** 2 + (yy + 0.5 - k.y) ** 2;
+        if (d < bestD) { bestD = d; bestWall = t; }
       }
-      const o = this.owner[ty * this.w + tx];
-      if (o !== 0 && o !== k.owner) {
-        k.hp -= CFG.tankOverrunDmg;
-        if (k.hp <= 0) this.tanks.splice(i, 1);
+    }
+    if (bestWall >= 0) {
+      this.wall[bestWall] = Math.max(0, this.wall[bestWall] - CFG.tankWallDmg);
+      this.wallDirty.push(bestWall);
+    }
+    const o = this.owner[ty * this.w + tx];
+    if (o !== 0 && o !== k.owner) k.hp -= CFG.tankOverrunDmg;
+    void idx;
+  }
+
+  private bomberActions(k: Unit, tx: number, ty: number): void {
+    if (k.cd > 0) k.cd--;
+    // rearm at an own airbase
+    if (k.ammo < CFG.bomberAmmo) {
+      for (const s of this.structures) {
+        if (s.owner === k.owner && s.type === "airbase" && (s.x + 0.5 - k.x) ** 2 + (s.y + 0.5 - k.y) ** 2 <= 1.5 * 1.5) {
+          k.ammo = CFG.bomberAmmo;
+          break;
+        }
       }
+    }
+    const o = this.owner[ty * this.w + tx];
+    if (o === 0 || o === k.owner || k.ammo <= 0 || k.cd > 0) return;
+    k.ammo--;
+    k.cd = CFG.bombCooldown;
+    const r = CFG.bombRadius;
+    for (const s of [...this.structures]) {
+      if (s.owner === k.owner) continue;
+      if ((s.x + 0.5 - k.x) ** 2 + (s.y + 0.5 - k.y) ** 2 <= r * r) this.removeStructure(s);
+    }
+    for (let yy = ty - r; yy <= ty + r; yy++) {
+      for (let xx = tx - r; xx <= tx + r; xx++) {
+        if (xx < 0 || yy < 0 || xx >= this.w || yy >= this.h) continue;
+        const t = yy * this.w + xx;
+        if (this.wall[t] && this.owner[t] !== k.owner && (xx + 0.5 - k.x) ** 2 + (yy + 0.5 - k.y) ** 2 <= r * r) {
+          this.wall[t] = 0;
+          this.wallDirty.push(t);
+        }
+      }
+    }
+    const d = this.players[o];
+    d.troops -= d.troops * CFG.bombTroopShare;
+    if (k.ammo === 0) {
+      // fly home to rearm
+      let best: Structure | null = null, bd = 1e9;
+      for (const s of this.structures) {
+        if (s.owner !== k.owner || s.type !== "airbase") continue;
+        const dd = (s.x - k.x) ** 2 + (s.y - k.y) ** 2;
+        if (dd < bd) { bd = dd; best = s; }
+      }
+      if (best) k.path = [[best.x + 0.5, best.y + 0.5]];
     }
   }
 
@@ -583,7 +661,7 @@ export class Game {
     this.tickNo++;
     if (this.spawnTicks > 0) { this.spawnTicks--; return; }
     for (const a of [...this.attacks]) this.stepAttack(a);
-    this.stepTanks();
+    this.stepUnits();
 
     const banks = new Map<number, number>();
     for (const s of this.structures) if (s.type === "bank") banks.set(s.owner, (banks.get(s.owner) ?? 0) + 1);

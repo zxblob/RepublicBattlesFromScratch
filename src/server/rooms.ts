@@ -127,9 +127,9 @@ export class Room {
   }
 
   private unitInfos(): UnitInfo[] {
-    return this.game!.tanks.map((k) => {
+    return this.game!.units.map((k) => {
       const last = k.path[k.path.length - 1];
-      return { id: k.id, owner: k.owner, x: Math.round(k.x * 100) / 100, y: Math.round(k.y * 100) / 100, hp: k.hp, tx: last ? last[0] : -1, ty: last ? last[1] : -1 };
+      return { id: k.id, owner: k.owner, x: Math.round(k.x * 100) / 100, y: Math.round(k.y * 100) / 100, hp: k.hp, k: k.kind, ammo: k.ammo, tx: last ? last[0] : -1, ty: last ? last[1] : -1 };
     });
   }
 
@@ -160,13 +160,13 @@ export class Room {
       }
       case "train": {
         if (!g || this.paused || !c.playerId) return;
-        const r = g.trainTank(c.playerId);
+        const r = g.trainUnit(c.playerId, msg.kind);
         if (!r.ok) this.send(c, { t: "error", msg: r.error ?? "failed" });
         return;
       }
       case "move": {
         if (!g || this.paused || !c.playerId || !Array.isArray(msg.pts)) return;
-        const r = g.moveTank(c.playerId, Number(msg.id), msg.pts);
+        const r = g.moveUnit(c.playerId, Number(msg.id), msg.pts);
         if (!r.ok) this.send(c, { t: "error", msg: r.error ?? "failed" });
         return;
       }
