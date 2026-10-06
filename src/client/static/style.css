@@ -126,3 +126,21 @@ summary { cursor: pointer; font-weight: 600; }
 
 img.ic { width: 22px; height: 22px; image-rendering: pixelated; vertical-align: middle; margin-right: 6px; }
 #builds button img.ic { float: left; margin-top: 4px; }
+
+/* radial menu */
+#radial { position: fixed; width: 0; height: 0; z-index: 20; pointer-events: none; }
+#radial .r-ring { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 50%;
+  border: 2px dashed rgba(255,255,255,0.18); background: radial-gradient(circle, rgba(10,22,38,0.55), rgba(10,22,38,0.15) 70%); }
+#radial .r-btn { position: absolute; left: 0; top: 0; margin: -30px 0 0 -30px; width: 60px; height: 60px; border-radius: 50%;
+  display: grid; place-items: center; align-content: center; gap: 0; padding: 0; pointer-events: auto; line-height: 1.05;
+  background: var(--panel); border: 2px solid rgba(255,255,255,0.35); color: var(--text); box-shadow: 0 4px 14px rgba(0,0,0,0.45); }
+#radial .r-item { animation: rpop 0.16s ease-out both; }
+#radial .r-item:hover { background: #24425f; border-color: var(--accent); }
+#radial .r-item.off { opacity: 0.42; }
+#radial .r-item.danger { border-color: #e0605a; }
+#radial .r-center { width: 38px; height: 38px; margin: -19px 0 0 -19px; font-size: 18px; min-height: 0; }
+#radial img { width: 26px; height: 26px; image-rendering: pixelated; }
+#radial .g { font-size: 22px; }
+#radial .l { font-size: 10px; font-weight: 700; max-width: 56px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#radial .s { font-size: 9px; color: var(--muted); }
+@keyframes rpop { from { opacity: 0; scale: 0.4; } to { opacity: 1; scale: 1; } }

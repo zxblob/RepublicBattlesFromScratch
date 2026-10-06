@@ -3,6 +3,7 @@ import type { GameSetup, ServerMsg, UnitK } from "../core/protocol";
 import { fmt } from "./format";
 import { Input } from "./input";
 import { loadSession, Net, saveSession } from "./net";
+import { Radial, RItem } from "./radial";
 import { Overlay, Renderer } from "./render";
 import { ClientGame } from "./state";
 
@@ -407,6 +408,128 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#attack-menu [data
 $("am-retreat").onclick = () => { net.send({ t: "cancel", id: menuAttack }); closeAttackMenu(); };
 $("am-close").onclick = closeAttackMenu;
 
+// ---- radial menu ---------------------------------------------------------------------------------
+const radial = new Radial(document.body);
+canvas.addEventListener("pointerdown", () => radial.close());
+canvas.addEventListener("wheel", () => radial.close(), { passive: true });
+
+const icon = (name: string): string | undefined => renderer.sprites.get(name, 0x4aa3ff)?.toDataURL();
+
+function hull(pts: [number, number][]): [number, number][] {
+  const p = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo: [number, number][] = [], up: [number, number][] = [];
+  for (const q of p) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (const q of [...p].reverse()) { while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  return lo.slice(0, -1).concat(up.slice(0, -1));
+}
+
+/** Quick attack: a capsule-shaped area from your nearest border tile out to the tapped tile. */
+function quickAttack(tx: number, ty: number): void {
+  if (!game) return;
+  let best = -1, bd = 1e9;
+  const R = 60;
+  for (let y = Math.max(0, ty - R); y <= Math.min(game.h - 1, ty + R); y++) {
+    for (let x = Math.max(0, tx - R); x <= Math.min(game.w - 1, tx + R); x++) {
+      if (game.owner[y * game.w + x] !== game.you) continue;
+      const d = (x - tx) ** 2 + (y - ty) ** 2;
+      if (d < bd) { bd = d; best = y * game.w + x; }
+    }
+  }
+  if (best < 0) { toast("No border of yours near there"); return; }
+  const bx = (best % game.w) + 0.5, by = Math.floor(best / game.w) + 0.5;
+  const r = 6;
+  const pts: [number, number][] = [];
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2;
+    pts.push([tx + 0.5 + Math.cos(a) * r, ty + 0.5 + Math.sin(a) * r], [bx + Math.cos(a) * 2.5, by + Math.sin(a) * 2.5]);
+  }
+  const poly = hull(pts).flat().map((n) => Math.round(n * 100) / 100);
+  net.send({ t: "attack", poly, ratio: Number(ratioEl.value) / 100 });
+  ov.ghosts.push({ pts: poly, born: performance.now() });
+}
+
+function buildItem(type: StructType, tx: number, ty: number): RItem {
+  const cost = game!.structCost(type);
+  const coastal = type === "port";
+  return {
+    label: CFG.structures[type].label.replace(" Launcher", ""),
+    sub: fmt(cost),
+    icon: icon(type),
+    disabled: game!.me().gold < cost || (coastal && !game!.terrain[ty * game!.w + tx + 1] && false),
+    onClick: () => net.send({ t: "build", type, x: tx, y: ty }),
+  };
+}
+
+function nukeItems(wx: number, wy: number): RItem[] {
+  return (Object.keys(MISSILES) as MissileKind[]).map((k) => ({
+    label: MISSILES[k].label.replace(" bomb", ""),
+    sub: fmt(MISSILES[k].cost),
+    glyph: "🚀",
+    disabled: game!.me().gold < MISSILES[k].cost,
+    danger: true,
+    onClick: () => net.send({ t: "missile", x: wx, y: wy, kind: k }),
+  }));
+}
+
+function radialFor(wx: number, wy: number): RItem[] | null {
+  if (!game || !game.me().alive) return null;
+  const tx = Math.floor(wx), ty = Math.floor(wy);
+  if (tx < 0 || ty < 0 || tx >= game.w || ty >= game.h) return null;
+  const i = ty * game.w + tx;
+  if (game.terrain[i] === 0) return null; // water
+  const owner = game.owner[i];
+  const silo = game.has("silo");
+
+  if (owner === game.you) {
+    if (game.structs.some((s) => s.x === tx && s.y === ty)) return null;
+    if (game.terrain[i] !== 1) { toast("Build on flat land (not mountains)"); return null; }
+    const eco: StructType[] = ["bank", "city", "farm", "port", "factory", ...(game.research ? (["lab"] as StructType[]) : [])];
+    const mil: StructType[] = ["bunker", "barracks", "sam", "tankfactory", "airbase", "silo"];
+    const items: RItem[] = [
+      { label: "Economy", glyph: "💰", children: eco.map((t) => buildItem(t, tx, ty)) },
+      { label: "Military", glyph: "🛡", children: mil.map((t) => buildItem(t, tx, ty)) },
+      { label: "Wall", glyph: "▬", onClick: () => lineTool("wall", "Draw a line on your own land to build a wall") },
+      { label: "Rail", glyph: "⌇", onClick: () => lineTool("rail", "Draw rails between Cities, Factories and Ports on your land") },
+    ];
+    if (game.mode === "wow" && (game.phase === "space" || game.planet)) items.splice(2, 0, { label: "Space", glyph: "★", children: [buildItem("spaceport", tx, ty)] });
+    return items;
+  }
+
+  if (owner === 0) {
+    const items: RItem[] = [{ label: "Expand", glyph: "⚑", onClick: () => quickAttack(tx, ty) }];
+    if (silo) items.push({ label: "Missile", glyph: "🚀", danger: true, children: nukeItems(wx, wy) });
+    return items;
+  }
+
+  const p = game.players.get(owner);
+  if (!p) return null;
+  const me = game.me_;
+  const items: RItem[] = [];
+  if (game.friendly(owner)) {
+    items.push({ label: "Give troops", glyph: "⚔", onClick: () => net.send({ t: "donate", to: owner, what: "troops" }) });
+    items.push({ label: "Give gold", glyph: "💰", onClick: () => net.send({ t: "donate", to: owner, what: "gold" }) });
+    if (me.allies.includes(owner)) items.push({ label: "Break", glyph: "✂", danger: true, onClick: () => net.send({ t: "unally", with: owner }) });
+  } else {
+    items.push({ label: "Attack", sub: p.name, glyph: "⚔", danger: true, onClick: () => quickAttack(tx, ty) });
+    if (silo) items.push({ label: "Missile", glyph: "🚀", danger: true, children: nukeItems(wx, wy) });
+    if (game.mode !== "team") {
+      items.push({ label: me.reqs.includes(owner) ? "Accept" : "Ally", glyph: "🤝", onClick: () => net.send({ t: "ally", with: owner }) });
+    }
+    const on = me.embargo.includes(owner);
+    items.push({ label: on ? "Lift embargo" : "Embargo", glyph: "⛔", onClick: () => net.send({ t: "embargo", with: owner, on: !on }) });
+  }
+  return items;
+}
+
+function openRadial(wx: number, wy: number): boolean {
+  const items = radialFor(wx, wy);
+  if (!items) return false;
+  const b = canvas.getBoundingClientRect();
+  radial.open(b.left + renderer.cw / 2 + (wx - renderer.cam.x) * renderer.cam.zoom, b.top + renderer.ch / 2 + (wy - renderer.cam.y) * renderer.cam.zoom, items);
+  return true;
+}
+
 const input = new Input(canvas, renderer, {
   drawMode: () => drawMode,
   onLasso(poly, pressure) {
@@ -437,7 +560,7 @@ const input = new Input(canvas, renderer, {
     if (ov.selTank && !buildType) { net.send({ t: "move", id: ov.selTank, pts: [wx, wy], ratio: Number(ratioEl.value) / 100 }); return; }
     if (!buildType && openAttackMenu(wx, wy)) return;
     closeAttackMenu();
-    if (!buildType) return;
+    if (!buildType) { openRadial(wx, wy); return; }
     net.send({ t: "build", type: buildType, x: Math.floor(wx), y: Math.floor(wy) });
     buildType = null;
     refreshBuilds();

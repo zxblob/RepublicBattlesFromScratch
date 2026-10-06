@@ -8,6 +8,7 @@ Written from scratch (TypeScript, Node, WebSocket, Canvas). MIT licensed.
 ## Play
 
 - **Solo** against 1–20 nation bots, or **create a private lobby** and share the 5-letter code.
+- **Radial menu:** tap any land with no tool active and a ring of round buttons opens around your finger. On your own land: Economy / Military build rings (pixel icons and costs), Wall, Rail. On neutral land: Expand (quick attack) and Missile. On a rival: Attack, Missile, Ally, Embargo. On an ally: give troops or gold, or break the alliance. Tap the centre to go back or close; Esc also closes it.
 - **Invade:** drag to lasso an area of enemy or neutral land that touches your border. Your troops commit to that area only,
   scaled by the *Troops per attack* slider.
 - **Build:** Bunker (defence), Barracks (cheaper attacks), Bank (gold), Radar (shows enemy attack fronts), Tank Factory.
