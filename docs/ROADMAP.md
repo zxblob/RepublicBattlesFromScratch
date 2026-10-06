@@ -35,3 +35,10 @@ Order: attack-feel/range polish → units → World War mode → persistence →
   by host). Late feature.
 - **Multiplayer save games (important, after units + World War):** snapshot the whole room (map, owners, structures,
   attacks, research, RNG state) to disk; host can save/load a lobby; same snapshot powers restart-resume.
+
+## Decisions: buildings, attacks, fog, teams
+- Buildings to add (in addition to Tank Factory, Airbase, Wall): Port/Harbor, SAM Launcher, Missile Silo, Research Lab, Farm.
+- Attack UX: tap an active attack marker to **Reinforce** or **Retreat**.
+- No fog of war; Radar keeps showing fronts and troop numbers.
+- Team mode in the lobby plus alliances in free-for-all (allies cannot attack each other; shared vision).
+- Open: the full feature list of the MSN FrontWars build (page is JS-only, could not be read automatically).
