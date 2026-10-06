@@ -109,3 +109,6 @@ summary { cursor: pointer; font-weight: 600; }
 @media (max-width: 600px) { #panel { top: calc(var(--safe-t) + 100px); bottom: 220px; } }
 #builds { order: 9; flex: 1 1 100%; }
 #tools { gap: 6px; }
+#bottom { grid-template-columns: minmax(0, 1fr); overflow: hidden; }
+#bottom > * { min-width: 0; }
+#builds { max-width: 100%; }
