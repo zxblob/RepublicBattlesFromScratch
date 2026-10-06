@@ -193,6 +193,8 @@ describe("War of the Worlds", () => {
   });
 });
 
+const CFG_RAIL_LIMIT = (_g: Game) => { /* maxRailTilesPerDraw (120) is above the longest line used in tests */ };
+
 describe("OpenFront-style extras", () => {
   it("hydrogen bombs hit a bigger radius than atom bombs; mirv fires several warheads", () => {
     const g = make(0, {}, 9, 2);
@@ -232,6 +234,42 @@ describe("OpenFront-style extras", () => {
     const rt = y * g.w + x;
     g.setOwner(rt, 2);
     expect(g.rail[rt]).toBe(0);
+  });
+  it("rails snap to nearby buildings and link allied bases for shared income", () => {
+    const g = make(1, {}, 4, 2); // a third nation keeps the game from ending when the two humans ally
+    const a = g.players[1], b = g.players[2];
+    a.gold = 1e6; b.gold = 1e6;
+    g.proposeAlliance(1, 2);
+    g.proposeAlliance(2, 1);
+    const { x: ax, y: ay } = capXY(g, 1);
+    const { x: bx, y: by } = capXY(g, 2);
+    // give player 2 a strip of land connecting both bases, owned half by each side
+    CFG_RAIL_LIMIT(g);
+    const steps = Math.max(Math.abs(bx - ax), Math.abs(by - ay));
+    const path: number[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const x = Math.round(ax + ((bx - ax) * i) / steps), y = Math.round(ay + ((by - ay) * i) / steps);
+      const t = y * g.w + x;
+      g.terrain[t] = Terrain.Land; // level the strip so the line is buildable
+      g.setOwner(t, i < steps / 2 ? 1 : 2);
+      path.push(x + 0.5, y + 0.5);
+    }
+    g.build(1, "city", ax + 1, ay);
+    g.build(2, "factory", bx + 1, by);
+    const before = a.gold;
+    // end points are 1 tile away from the buildings: they must snap on
+    const res = g.buildRail(1, path);
+    expect(res.ok).toBe(true);
+    for (let i = 0; i < 12; i++) g.tick();
+    const inc1 = g.railIncome.get(1) ?? 0, inc2 = g.railIncome.get(2) ?? 0;
+    expect(inc1).toBeGreaterThan(0);
+    expect(inc2).toBeCloseTo(inc1);
+    expect(inc1 + inc2).toBeCloseTo(CFG.railGold * 1.5);
+    expect(a.gold).toBeGreaterThan(before - 1000);
+    // breaking the alliance cuts the network
+    g.breakAlliance(1, 2);
+    for (let i = 0; i < 12; i++) g.tick();
+    expect(g.railIncome.size).toBe(0);
   });
   it("dominance countdown ends the game for the leader", () => {
     const g = make(3, {}, 6);

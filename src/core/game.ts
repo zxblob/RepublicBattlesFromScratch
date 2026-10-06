@@ -261,6 +261,7 @@ export class Game {
       this.allyReq.set(a, mine.filter((x) => x !== b));
       pa.allies.push(b);
       pb.allies.push(a);
+      this.railStale = true;
       this.events.push({ k: "text", text: `${pa.name} and ${pb.name} are now allies` });
       return { ok: true, data: { formed: true } };
     }
@@ -268,6 +269,7 @@ export class Game {
       if (pb.aggression < 1.0 || this.rng() < 0.25) {
         pa.allies.push(b);
         pb.allies.push(a);
+        this.railStale = true;
         this.events.push({ k: "text", text: `${pa.name} and ${pb.name} are now allies` });
         return { ok: true, data: { formed: true } };
       }
@@ -286,6 +288,7 @@ export class Game {
     if (!pa.allies.includes(b)) return { ok: false, error: "not allied" };
     pa.allies = pa.allies.filter((x) => x !== b);
     pb.allies = pb.allies.filter((x) => x !== a);
+    this.railStale = true;
     this.events.push({ k: "text", text: `${pa.name} broke the alliance with ${pb.name}` });
     return { ok: true };
   }
@@ -1081,20 +1084,39 @@ export class Game {
     if (this.spawnTicks > 0) return { ok: false, error: "choose your start first" };
     if (pts.length < 4 || pts.length > CFG.maxPolyPoints * 2) return { ok: false, error: "bad shape" };
     for (let i = 0; i < pts.length; i++) if (!Number.isFinite(pts[i])) return { ok: false, error: "bad shape" };
-    const tiles = this.lineTiles(pts);
+    const tiles = this.lineTiles(this.snapToBuildings(pid, pts));
     let placed = 0;
     for (const t of tiles) {
       if (placed >= CFG.maxRailTilesPerDraw) break;
-      if (this.owner[t] !== pid || this.terrain[t] !== Terrain.Land || this.rail[t] || this.wall[t]) continue;
+      const o = this.owner[t];
+      if (o === 0 || !this.friendly(pid, o) || this.terrain[t] !== Terrain.Land || this.rail[t] || this.wall[t]) continue;
       if (p.gold < CFG.railTileCost) break;
       p.gold -= CFG.railTileCost;
       this.rail[t] = 1;
       this.railDirty.push(t);
       placed++;
     }
-    if (!placed) return { ok: false, error: p.gold < CFG.railTileCost ? "not enough gold" : "rails go on your own flat land" };
+    if (!placed) return { ok: false, error: p.gold < CFG.railTileCost ? "not enough gold" : "rails go on your own or allied flat land" };
     this.railStale = true;
     return { ok: true, data: { placed } };
+  }
+
+  /** If a line starts or ends within 3 tiles of a City, Factory or Port (yours or an ally's), extend it onto that building. */
+  private snapToBuildings(pid: number, pts: ArrayLike<number>): number[] {
+    const out = Array.from(pts);
+    const snap = (ix: number): void => {
+      const x = out[ix], y = out[ix + 1];
+      let best: Structure | null = null, bd = 9.5;
+      for (const st of this.structures) {
+        if ((st.type !== "city" && st.type !== "factory" && st.type !== "port") || !this.friendly(pid, st.owner)) continue;
+        const d = (st.x + 0.5 - x) ** 2 + (st.y + 0.5 - y) ** 2;
+        if (d < bd) { bd = d; best = st; }
+      }
+      if (best) { out[ix] = best.x + 0.5; out[ix + 1] = best.y + 0.5; }
+    };
+    snap(0);
+    snap(out.length - 2);
+    return out;
   }
 
   private lineTiles(pts: ArrayLike<number>): number[] {
@@ -1121,7 +1143,11 @@ export class Game {
     return tiles;
   }
 
-  /** Income from rail networks: each network with N linked buildings yields railGold * (N - 1) per tick. */
+  /**
+   * Income from rail networks. A network is a set of rail tiles touching each other (8-neighbourhood) across
+   * land of the same side (own land or an ally's). Each linked City / Factory / Port adds income: the network
+   * pays railGold * (N - 1) per tick, +50% when it links more than one nation, split between the buildings' owners.
+   */
   private recomputeRails(): void {
     this.railStale = false;
     this.railIncome.clear();
@@ -1130,7 +1156,7 @@ export class Game {
     const nodes = this.structures.filter((s) => s.type === "city" || s.type === "factory" || s.type === "port");
     for (let start = 0; start < rail.length; start++) {
       if (!rail[start] || seen.has(start)) continue;
-      const owner = this.owner[start];
+      const anchor = this.owner[start];
       const stack = [start];
       seen.add(start);
       const net = new Set<number>([start]);
@@ -1142,21 +1168,24 @@ export class Game {
             const nx = x + dx, ny = y + dy;
             if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
             const n = ny * w + nx;
-            if (rail[n] && !seen.has(n) && this.owner[n] === owner) { seen.add(n); net.add(n); stack.push(n); }
+            if (rail[n] && !seen.has(n) && this.friendly(anchor, this.owner[n])) { seen.add(n); net.add(n); stack.push(n); }
           }
         }
       }
-      let linked = 0;
+      const linked: Structure[] = [];
       for (const s of nodes) {
-        if (s.owner !== owner) continue;
+        if (!this.friendly(anchor, s.owner)) continue;
         let touch = false;
         for (let dy = -1; dy <= 1 && !touch; dy++) for (let dx = -1; dx <= 1 && !touch; dx++) {
           const nx = s.x + dx, ny = s.y + dy;
           if (nx >= 0 && ny >= 0 && nx < w && ny < h && net.has(ny * w + nx)) touch = true;
         }
-        if (touch) linked++;
+        if (touch) linked.push(s);
       }
-      if (linked >= 2) this.railIncome.set(owner, (this.railIncome.get(owner) ?? 0) + CFG.railGold * (linked - 1));
+      if (linked.length < 2) continue;
+      const owners = new Set(linked.map((s) => s.owner));
+      const total = CFG.railGold * (linked.length - 1) * (owners.size > 1 ? 1.5 : 1);
+      for (const s of linked) this.railIncome.set(s.owner, (this.railIncome.get(s.owner) ?? 0) + total / linked.length);
     }
   }
 

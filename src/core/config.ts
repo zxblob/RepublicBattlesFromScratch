@@ -75,7 +75,7 @@ export const CFG = {
   // factory, rails, trade
   factoryGold: 0.1,
   railTileCost: 1.5,
-  railGold: 0.08, // per link (node-1) per tick on a connected rail network
+  railGold: 0.08, // per link (buildings - 1) per tick on a connected rail network (+50% across allies)
   maxRailTilesPerDraw: 120,
   tradeEvery: 600,
   tradeBase: 0.6,

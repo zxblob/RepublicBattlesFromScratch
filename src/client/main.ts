@@ -196,7 +196,7 @@ function lineTool(kind: "wall" | "rail", hint: string): void {
   toast(hint);
 }
 $("wall").onclick = () => lineTool("wall", "Draw a line on your own land to build a wall");
-$("rail").onclick = () => lineTool("rail", "Draw rails between Cities, Factories and Ports on your land");
+$("rail").onclick = () => lineTool("rail", "Draw rails from a City, Factory or Port to another (yours or an ally's). Ends snap to nearby buildings.");
 
 const missileBtns = new Map<MissileKind, HTMLButtonElement>();
 for (const k of Object.keys(MISSILES) as MissileKind[]) {
@@ -490,7 +490,7 @@ function radialFor(wx: number, wy: number): RItem[] | null {
       { label: "Economy", glyph: "💰", children: eco.map((t) => buildItem(t, tx, ty)) },
       { label: "Military", glyph: "🛡", children: mil.map((t) => buildItem(t, tx, ty)) },
       { label: "Wall", glyph: "▬", onClick: () => lineTool("wall", "Draw a line on your own land to build a wall") },
-      { label: "Rail", glyph: "⌇", onClick: () => lineTool("rail", "Draw rails between Cities, Factories and Ports on your land") },
+      { label: "Rail", glyph: "⌇", onClick: () => lineTool("rail", "Draw rails from a City, Factory or Port to another (yours or an ally's). Ends snap to nearby buildings.") },
     ];
     if (game.mode === "wow" && (game.phase === "space" || game.planet)) items.splice(2, 0, { label: "Space", glyph: "★", children: [buildItem("spaceport", tx, ty)] });
     return items;
