@@ -85,6 +85,19 @@ export interface Attack {
   cy: number;
 }
 
+export interface Train {
+  id: number;
+  key: string;
+  /** owners of the two stations (equal for a private line) */
+  a: number;
+  b: number;
+  pts: [number, number][];
+  cum: number[];
+  /** distance travelled along the line, and direction (1 = towards b) */
+  d: number;
+  dir: 1 | -1;
+}
+
 export interface Missile {
   id: number;
   owner: number;
@@ -156,8 +169,11 @@ export class Game {
   teams: number;
   readonly planet: string;
   readonly dominance: boolean;
-  /** rail network income per player per tick (recomputed when rails or structures change) */
-  railIncome = new Map<number, number>();
+  /** trains shuttling between the buildings a rail network links; every arrival pays gold */
+  trains: Train[] = [];
+  /** gold earned from trains so far, per player (statistics) */
+  railEarned = new Map<number, number>();
+  private nextTrainId = 1;
   railDirty: number[] = [];
   private railStale = true;
   domLeader = 0;
@@ -1166,16 +1182,17 @@ export class Game {
   }
 
   /**
-   * Income from rail networks. A network is a set of rail tiles touching each other (8-neighbourhood) across
-   * land of the same side (own land or an ally's). Each linked City / Factory / Port adds income: the network
-   * pays railGold * (N - 1) per tick, +50% when it links more than one nation, split between the buildings' owners.
+   * Rail networks and trains. A network is a set of rail tiles touching each other (8-neighbourhood) across
+   * land of the same side (own land or an ally's). For each pair of neighbouring City / Factory / Port stations
+   * on a network (up to maxTrainsPerNetwork) a train shuttles along the shortest track; every arrival pays
+   * trainFarePerTile * length (+50% when the stations belong to different nations), shared between the two owners.
    */
   private recomputeRails(): void {
     this.railStale = false;
-    this.railIncome.clear();
     const { w, h, rail } = this;
     const seen = new Set<number>();
     const nodes = this.structures.filter((s) => s.type === "city" || s.type === "factory" || s.type === "port");
+    const routes: { key: string; a: number; b: number; pts: [number, number][]; cum: number[] }[] = [];
     for (let start = 0; start < rail.length; start++) {
       if (!rail[start] || seen.has(start)) continue;
       const anchor = this.owner[start];
@@ -1194,21 +1211,81 @@ export class Game {
           }
         }
       }
-      const linked: Structure[] = [];
-      for (const s of nodes) {
-        if (!this.friendly(anchor, s.owner)) continue;
-        let touch = false;
-        for (let dy = -1; dy <= 1 && !touch; dy++) for (let dx = -1; dx <= 1 && !touch; dx++) {
+      const touching = (s: Structure): number[] => {
+        const r: number[] = [];
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
           const nx = s.x + dx, ny = s.y + dy;
-          if (nx >= 0 && ny >= 0 && nx < w && ny < h && net.has(ny * w + nx)) touch = true;
+          if (nx >= 0 && ny >= 0 && nx < w && ny < h && net.has(ny * w + nx)) r.push(ny * w + nx);
         }
-        if (touch) linked.push(s);
+        return r;
+      };
+      const linked = nodes.filter((s) => this.friendly(anchor, s.owner) && touching(s).length).sort((p, q) => p.x - q.x || p.y - q.y);
+      for (let i = 0; i + 1 < linked.length && i < CFG.maxTrainsPerNetwork; i++) {
+        const A = linked[i], B = linked[i + 1];
+        const goal = new Set(touching(B));
+        const prev = new Map<number, number>();
+        const q = touching(A);
+        for (const t of q) prev.set(t, -1);
+        let end = -1;
+        for (let qi = 0; qi < q.length && end < 0; qi++) {
+          const t = q[qi];
+          if (goal.has(t)) { end = t; break; }
+          const x = t % w, y = (t / w) | 0;
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const n = ny * w + nx;
+            if (net.has(n) && !prev.has(n)) { prev.set(n, t); q.push(n); }
+          }
+        }
+        if (end < 0) continue;
+        const tiles: number[] = [];
+        for (let t = end; t !== -1; t = prev.get(t)!) tiles.push(t);
+        tiles.reverse();
+        const pts: [number, number][] = [[A.x + 0.5, A.y + 0.5], ...tiles.map((t): [number, number] => [(t % w) + 0.5, Math.floor(t / w) + 0.5]), [B.x + 0.5, B.y + 0.5]];
+        const cum = [0];
+        for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
+        if (cum[cum.length - 1] < 1.5) continue;
+        routes.push({ key: `${A.id}-${B.id}`, a: A.owner, b: B.owner, pts, cum });
       }
-      if (linked.length < 2) continue;
-      const owners = new Set(linked.map((s) => s.owner));
-      const total = CFG.railGold * (linked.length - 1) * (owners.size > 1 ? 1.5 : 1);
-      for (const s of linked) this.railIncome.set(s.owner, (this.railIncome.get(s.owner) ?? 0) + total / linked.length);
     }
+    // keep trains whose line did not change so their progress is not reset
+    const old = new Map(this.trains.map((t) => [t.key, t]));
+    this.trains = routes.map((r, i) => {
+      const prevT = old.get(r.key);
+      const L = r.cum[r.cum.length - 1];
+      if (prevT && Math.abs(prevT.cum[prevT.cum.length - 1] - L) < 1e-6) return { ...prevT, a: r.a, b: r.b, pts: r.pts, cum: r.cum };
+      return { id: this.nextTrainId++, key: r.key, a: r.a, b: r.b, pts: r.pts, cum: r.cum, d: ((i * 0.37) % 1) * L, dir: 1 as const };
+    });
+  }
+
+  private stepTrains(): void {
+    for (const t of this.trains) {
+      const L = t.cum[t.cum.length - 1];
+      t.d += t.dir * CFG.trainSpeed;
+      if (t.d >= L || t.d <= 0) {
+        t.d = t.d >= L ? L : 0;
+        t.dir = t.dir === 1 ? -1 : 1;
+        const pa = this.players[t.a], pb = this.players[t.b];
+        if (!pa?.alive || !pb?.alive) continue;
+        const fare = CFG.trainFarePerTile * L * (t.a !== t.b ? 1.5 : 1);
+        const half = t.a !== t.b ? fare / 2 : fare;
+        pa.gold += half;
+        this.railEarned.set(t.a, (this.railEarned.get(t.a) ?? 0) + half);
+        if (t.a !== t.b) { pb.gold += half; this.railEarned.set(t.b, (this.railEarned.get(t.b) ?? 0) + half); }
+      }
+    }
+  }
+
+  /** Current position and heading of a train. */
+  trainPose(t: Train): { x: number; y: number; a: number } {
+    let i = 1;
+    while (i < t.cum.length - 1 && t.cum[i] < t.d) i++;
+    const f = (t.d - t.cum[i - 1]) / Math.max(1e-6, t.cum[i] - t.cum[i - 1]);
+    const [x0, y0] = t.pts[i - 1], [x1, y1] = t.pts[i];
+    let a = Math.atan2(y1 - y0, x1 - x0) + Math.PI / 2;
+    if (t.dir === -1) a += Math.PI;
+    return { x: x0 + (x1 - x0) * f, y: y0 + (y1 - y0) * f, a };
   }
 
   // ---- tick -----------------------------------------------------------------------------------
@@ -1223,6 +1300,7 @@ export class Game {
     this.stepMissiles();
     this.stepTrade();
     if (this.railStale && this.tickNo % 10 === 0) this.recomputeRails();
+    this.stepTrains();
     const counts = new Map<number, Record<string, number>>();
     for (const st of this.structures) {
       const c = counts.get(st.owner) ?? {};
@@ -1246,7 +1324,7 @@ export class Game {
         p.troops = Math.min(cap, p.troops + regen);
       }
       let gold = CFG.goldBase + p.tiles * CFG.goldPerTile + (c.bank ?? 0) * CFG.bankGold * (this.has(p, "econ2") ? 2 : 1);
-      gold += (c.port ?? 0) * CFG.portGold + (c.city ?? 0) * CFG.cityGold + (c.factory ?? 0) * CFG.factoryGold + (this.railIncome.get(id) ?? 0);
+      gold += (c.port ?? 0) * CFG.portGold + (c.city ?? 0) * CFG.cityGold + (c.factory ?? 0) * CFG.factoryGold;
       if (p.tech.length) gold *= 1 + (this.has(p, "econ1") ? 0.15 : 0) + (this.has(p, "econ2") ? 0.25 : 0);
       if (this.planet === "desert") gold *= 0.6;
       p.gold += gold;

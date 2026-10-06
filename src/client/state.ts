@@ -2,7 +2,7 @@ import { CFG, StructType } from "../core/config";
 import { Terrain } from "../core/mapgen";
 import { unrle } from "../core/protocol";
 import type {
-  AttackInfo, MeInfo, MissileInfo, PlayerInfo, PlayerStat, ServerMsg, StructInfo, UnitInfo,
+  AttackInfo, MeInfo, MissileInfo, PlayerInfo, PlayerStat, ServerMsg, StructInfo, TrainInfo, UnitInfo,
 } from "../core/protocol";
 
 export interface Stat { troops: number; gold: number; tiles: number; alive: boolean }
@@ -25,6 +25,7 @@ export class ClientGame {
   structs: StructInfo[] = [];
   units: UnitInfo[] = [];
   missiles: MissileInfo[] = [];
+  trains: TrainInfo[] = [];
   walls = new Map<number, number>();
   rails = new Uint8Array(0);
   /** bumped whenever rails or structures change, so the renderer can rebuild its trains */
@@ -109,6 +110,7 @@ export class ClientGame {
     this.attacks = m.a;
     this.units = m.u;
     this.missiles = m.ms;
+    this.trains = m.tr;
     this.phase = m.ph;
     this.pt = m.pt;
     this.me_ = m.me;

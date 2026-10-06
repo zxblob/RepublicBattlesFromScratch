@@ -1,6 +1,8 @@
 import { CFG, MISSILES, MissileKind, STRUCT_TYPES, StructType, TECH, TECH_IDS } from "../core/config";
 import type { GameSetup, ServerMsg, UnitK } from "../core/protocol";
 import { fmt } from "./format";
+import { actionInfo, missileInfo, structInfo, toolInfo, unitInfo } from "./info";
+import { attachTip } from "./tooltip";
 import { Input } from "./input";
 import { loadSession, Net, saveSession } from "./net";
 import { Radial, RItem } from "./radial";
@@ -200,11 +202,18 @@ function lineTool(kind: "wall" | "rail", hint: string): void {
 $("wall").onclick = () => lineTool("wall", "Draw a line on your own land to build a wall");
 $("rail").onclick = () => lineTool("rail", "Draw rails from a City, Factory or Port to another (yours or an ally's). Ends snap to nearby buildings.");
 
+attachTip($("draw"), () => toolInfo("draw"));
+attachTip($("wall"), () => toolInfo("wall"));
+attachTip($("rail"), () => toolInfo("rail"));
+attachTip($("home"), () => toolInfo("home"));
+attachTip($("cancel"), () => toolInfo("cancel"));
+
 const missileBtns = new Map<MissileKind, HTMLButtonElement>();
 for (const k of Object.keys(MISSILES) as MissileKind[]) {
   const b = document.createElement("button");
   b.className = "hidden";
   b.textContent = `🚀 ${MISSILES[k].label} · ${fmt(MISSILES[k].cost)}`;
+  attachTip(b, () => missileInfo(k));
   b.onclick = () => {
     const on = !(ov.missileAim && missileKind === k);
     clearTools();
@@ -238,7 +247,7 @@ const buildBtns = new Map<StructType, HTMLButtonElement>();
 for (const type of STRUCT_TYPES) {
   const b = document.createElement("button");
   b.innerHTML = `${CFG.structures[type].label}<small></small>`;
-  b.title = CFG.structures[type].desc;
+  attachTip(b, () => structInfo(type, game?.structCost(type), game ? game.structs.filter((x) => x.owner === game!.you && x.type === type).length : 0));
   b.onclick = () => {
     const was = buildType === type;
     clearTools();
@@ -280,7 +289,7 @@ for (const u of UNITS) {
   const b = document.createElement("button");
   b.className = "hidden";
   b.textContent = `${u.label} · ${fmt(u.cost)}`;
-  b.title = `Train a ${u.label.toLowerCase()}`;
+  attachTip(b, () => unitInfo(u.k as "t"));
   b.onclick = () => net.send({ t: "train", kind: u.k });
   $("trains").appendChild(b);
   trainBtns.push(b);
@@ -462,6 +471,7 @@ function buildItem(type: StructType, tx: number, ty: number): RItem {
     sub: fmt(cost),
     icon: icon(type),
     disabled: game!.me().gold < cost || (coastal && !game!.terrain[ty * game!.w + tx + 1] && false),
+    info: () => structInfo(type, game?.structCost(type), game ? game.structs.filter((x) => x.owner === game!.you && x.type === type).length : 0),
     onClick: () => net.send({ t: "build", type, x: tx, y: ty }),
   };
 }
@@ -473,6 +483,7 @@ function nukeItems(wx: number, wy: number): RItem[] {
     glyph: "🚀",
     disabled: game!.me().gold < MISSILES[k].cost,
     danger: true,
+    info: () => missileInfo(k),
     onClick: () => net.send({ t: "missile", x: wx, y: wy, kind: k }),
   }));
 }
@@ -527,9 +538,17 @@ function radialFor(wx: number, wy: number): RItem[] | null {
   return items;
 }
 
+function addInfo(items: RItem[]): void {
+  for (const it of items) {
+    if (!it.info) { const i = actionInfo(it.label); if (i) it.info = () => i; }
+    if (it.children) addInfo(it.children);
+  }
+}
+
 function openRadial(wx: number, wy: number): boolean {
   const items = radialFor(wx, wy);
   if (!items) return false;
+  addInfo(items);
   const b = canvas.getBoundingClientRect();
   radial.open(b.left + renderer.cw / 2 + (wx - renderer.cam.x) * renderer.cam.zoom, b.top + renderer.ch / 2 + (wy - renderer.cam.y) * renderer.cam.zoom, items);
   return true;

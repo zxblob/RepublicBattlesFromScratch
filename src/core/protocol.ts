@@ -40,6 +40,15 @@ export interface UnitInfo {
   ty: number;
 }
 
+export interface TrainInfo {
+  id: number;
+  owner: number;
+  x: number;
+  y: number;
+  /** heading in radians (sprite faces up at 0) */
+  a: number;
+}
+
 export interface MissileInfo {
   id: number;
   owner: number;
@@ -180,6 +189,7 @@ export type ServerMsg =
       pt: number;
       me: MeInfo;
       ms: MissileInfo[];
+      tr: TrainInfo[];
       /** dominance countdown: ticks left (0 = none) and the leading player's id */
       dm: number;
       dl: number;

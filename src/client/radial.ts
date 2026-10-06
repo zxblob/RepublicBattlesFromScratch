@@ -1,3 +1,6 @@
+import type { Info } from "./info";
+import { attachTip, hideTip } from "./tooltip";
+
 /** A tap-anywhere radial menu: a ring of round buttons around the tap point, with optional sub-rings. */
 export interface RItem {
   label: string;
@@ -10,6 +13,8 @@ export interface RItem {
   danger?: boolean;
   onClick?: () => void;
   children?: RItem[];
+  /** hover (or long-press on touch) info card */
+  info?: () => Info | null;
 }
 
 export class Radial {
@@ -41,6 +46,7 @@ export class Radial {
     if (!this.isOpen) return;
     this.isOpen = false;
     this.stack = [];
+    hideTip();
     this.root.classList.add("hidden");
     this.root.innerHTML = "";
   }
@@ -96,6 +102,7 @@ export class Radial {
         s.textContent = it.sub;
         b.appendChild(s);
       }
+      if (it.info) attachTip(b, it.info);
       b.onclick = () => {
         if (it.disabled) return;
         if (it.children) { this.stack.push(it.children); this.render(); return; }

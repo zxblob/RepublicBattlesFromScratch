@@ -221,7 +221,7 @@ describe("OpenFront-style extras", () => {
     expect(g.setEmbargo(1, 2, true).ok).toBe(true);
     expect(g.players[1].embargo).toEqual([2]);
   });
-  it("rails connect cities and factories for income and break when land is lost", () => {
+  it("rails connect cities and factories: a train shuttles and pays on every arrival; losing land breaks the line", () => {
     const g = make(1);
     const p = g.players[1];
     p.gold = 1e6;
@@ -230,10 +230,16 @@ describe("OpenFront-style extras", () => {
     g.build(1, "factory", x + 2, y);
     expect(g.buildRail(1, [x - 2.5, y + 0.5, x + 2.5, y + 0.5]).ok).toBe(true);
     for (let i = 0; i < 12; i++) g.tick();
-    expect(g.railIncome.get(1)).toBeCloseTo(CFG.railGold);
+    expect(g.trains.length).toBe(1);
+    const L = g.trains[0].cum[g.trains[0].cum.length - 1];
+    expect(g.railEarned.get(1) ?? 0).toBe(0);
+    for (let i = 0; i < Math.ceil(L / CFG.trainSpeed) * 2 + 5; i++) g.tick();
+    expect(g.railEarned.get(1)).toBeGreaterThanOrEqual(CFG.trainFarePerTile * L - 1e-9);
     const rt = y * g.w + x;
     g.setOwner(rt, 2);
     expect(g.rail[rt]).toBe(0);
+    for (let i = 0; i < 12; i++) g.tick();
+    expect(g.trains.length).toBe(0);
   });
   it("rails snap to nearby buildings and link allied bases for shared income", () => {
     const g = make(1, {}, 4, 2); // a third nation keeps the game from ending when the two humans ally
@@ -261,15 +267,19 @@ describe("OpenFront-style extras", () => {
     const res = g.buildRail(1, path);
     expect(res.ok).toBe(true);
     for (let i = 0; i < 12; i++) g.tick();
-    const inc1 = g.railIncome.get(1) ?? 0, inc2 = g.railIncome.get(2) ?? 0;
-    expect(inc1).toBeGreaterThan(0);
-    expect(inc2).toBeCloseTo(inc1);
-    expect(inc1 + inc2).toBeCloseTo(CFG.railGold * 1.5);
+    expect(g.trains.length).toBe(1);
+    const L = g.trains[0].cum[g.trains[0].cum.length - 1];
+    for (let i = 0; i < Math.ceil(L / CFG.trainSpeed) * 2 + 5; i++) g.tick();
+    const e1 = g.railEarned.get(1) ?? 0, e2 = g.railEarned.get(2) ?? 0;
+    expect(e1).toBeGreaterThan(0);
+    expect(e2).toBeCloseTo(e1);
+    // cross-nation lines pay 50% more per arrival, split between both owners
+    expect((e1 + e2) / Math.round((e1 + e2) / (CFG.trainFarePerTile * L * 1.5))).toBeCloseTo(CFG.trainFarePerTile * L * 1.5);
     expect(a.gold).toBeGreaterThan(before - 1000);
     // breaking the alliance cuts the network
     g.breakAlliance(1, 2);
     for (let i = 0; i < 12; i++) g.tick();
-    expect(g.railIncome.size).toBe(0);
+    expect(g.trains.length).toBe(0);
   });
   it("dominance countdown ends the game for the leader", () => {
     const g = make(3, {}, 6);

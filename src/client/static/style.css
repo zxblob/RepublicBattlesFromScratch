@@ -144,3 +144,13 @@ img.ic { width: 22px; height: 22px; image-rendering: pixelated; vertical-align: 
 #radial .l { font-size: 10px; font-weight: 700; max-width: 56px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #radial .s { font-size: 9px; color: var(--muted); }
 @keyframes rpop { from { opacity: 0; scale: 0.4; } to { opacity: 1; scale: 1; } }
+
+/* info tooltip */
+#tip { position: fixed; z-index: 60; max-width: 270px; background: rgba(8, 18, 32, 0.97); border: 1px solid rgba(255,255,255,0.28);
+  border-radius: 12px; padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); pointer-events: none; font-size: 13px; }
+#tip .tip-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+#tip .tip-h b { font-size: 15px; color: var(--accent); }
+#tip .tip-h span { font-size: 11px; color: var(--muted); text-align: right; }
+#tip p { margin: 3px 0; color: var(--text); line-height: 1.35; }
+#tip .tip-c { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); font-weight: 700; color: #ffe678; }
+#tip .tip-w { margin-top: 4px; color: #ff8a80; font-weight: 600; }

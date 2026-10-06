@@ -372,6 +372,7 @@ export class Room {
     const structs = g.structDirty ? this.structInfos() : undefined;
     g.structDirty = false;
     const ms = g.missiles.map((m) => ({ id: m.id, owner: m.owner, sx: m.sx, sy: m.sy, tx: m.tx, ty: m.ty, total: m.total, left: m.left, k: m.kind, radius: m.radius }));
+    const tr = g.trains.map((t) => { const p = g.trainPose(t); return { id: t.id, owner: t.a, x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100, a: Math.round(p.a * 100) / 100 }; });
     const railTiles = [...new Set(g.railDirty)];
     g.railDirty = [];
     const rl: [number, number][] | undefined = railTiles.length ? railTiles.map((t) => [t, g.rail[t]] as [number, number]) : undefined;
@@ -411,7 +412,7 @@ export class Room {
       };
       this.send(c, {
         t: "tick", n: g.tickNo, d, p, a, s: structs, ev: ev.length ? ev : undefined, sp: g.spawnTicks, caps, u, w,
-        ph: g.phase, pt: g.phaseTicks, me: meInfo, ms, sk, rl, dm: g.domTicks, dl: g.domLeader ? g.players.findIndex((p) => p && p.alive && (p.team ? 1000 + p.team : p.id) === g.domLeader) : 0,
+        ph: g.phase, pt: g.phaseTicks, me: meInfo, ms, tr, sk, rl, dm: g.domTicks, dl: g.domLeader ? g.players.findIndex((p) => p && p.alive && (p.team ? 1000 + p.team : p.id) === g.domLeader) : 0,
       });
     }
     if (g.over) {

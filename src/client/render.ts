@@ -2,7 +2,6 @@ import { CFG, StructType } from "../core/config";
 import { Terrain } from "../core/mapgen";
 import { fmt } from "./format";
 import { Sprites } from "./sprites";
-import { buildTrains, Train, trainPose } from "./trains";
 import type { ClientGame } from "./state";
 
 export interface Camera { x: number; y: number; zoom: number }
@@ -43,8 +42,6 @@ export class Renderer {
   /** render-resolution multiplier, lowered automatically on slow devices */
   scale = 1;
   readonly sprites = new Sprites();
-  private trains: Train[] = [];
-  private trainsVersion = -1;
   private heading = new Map<number, number>();
   cw = 0;
   ch = 0;
@@ -275,24 +272,22 @@ export class Renderer {
     }
     ctx.imageSmoothingEnabled = false;
 
-    // trains shuttling along connected rail lines
-    if (this.trainsVersion !== g.railVersion) { this.trains = buildTrains(g); this.trainsVersion = g.railVersion; }
-    for (const tr of this.trains) {
-      const pose = trainPose(tr, now / 1000);
-      if (pose.x < vx0 || pose.x > vx1 || pose.y < vy0 || pose.y > vy1) continue;
+    // trains (positions come from the server: every arrival pays gold)
+    for (const tr of g.trains) {
+      if (tr.x < vx0 || tr.x > vx1 || tr.y < vy0 || tr.y > vy1) continue;
       const owner = g.players.get(tr.owner);
       const spr = this.sprites.get("train", owner ? owner.color : 0x888888);
       const size = Math.max(0.9, 8 / cam.zoom);
       if (spr) {
         ctx.imageSmoothingEnabled = false;
         ctx.save();
-        ctx.translate(pose.x, pose.y);
-        ctx.rotate(pose.angle);
+        ctx.translate(tr.x, tr.y);
+        ctx.rotate(tr.a);
         ctx.drawImage(spr, -size, -size, size * 2, size * 2);
         ctx.restore();
       } else {
         ctx.fillStyle = owner ? css(owner.color) : "#aaa";
-        ctx.fillRect(pose.x - size * 0.4, pose.y - size * 0.4, size * 0.8, size * 0.8);
+        ctx.fillRect(tr.x - size * 0.4, tr.y - size * 0.4, size * 0.8, size * 0.8);
       }
     }
 
