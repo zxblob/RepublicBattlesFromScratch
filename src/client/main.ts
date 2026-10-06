@@ -82,6 +82,7 @@ const ratioEl = $<HTMLInputElement>("ratio");
 ratioEl.oninput = () => ($("ratio-val").textContent = ratioEl.value + "%");
 $("draw").onclick = () => { drawMode = !drawMode; $("draw").classList.toggle("on", drawMode); };
 $("home").onclick = () => { const p = game?.players.get(game.you); if (p && game) renderer.centerOn(p.cap, 7); };
+$("ready").onclick = () => { net.send({ t: "ready" }); $("ready").textContent = "Waiting…"; };
 $("pause").onclick = () => net.send({ t: "pause" });
 $("cancel").onclick = () => { for (const a of game?.attacks ?? []) if (a.by === game!.you) net.send({ t: "cancel", id: a.id }); };
 
@@ -122,6 +123,7 @@ const input = new Input(canvas, renderer, {
   },
   onTap(wx, wy) {
     if (!game) return;
+    if (game.sp > 0) { net.send({ t: "spawn", x: Math.floor(wx), y: Math.floor(wy) }); return; }
     if (!buildType && openAttackMenu(wx, wy)) return;
     closeAttackMenu();
     if (!buildType) return;
@@ -187,6 +189,10 @@ function hud(): void {
   $("cancel").classList.toggle("hidden", !game.attacks.some((a) => a.by === game!.you));
   $("pause").classList.toggle("hidden", !isHost);
   setText($("pause"), game.paused ? "▶" : "⏸");
+  const spawning = game.sp > 0;
+  $("spawn-bar").classList.toggle("hidden", !spawning);
+  $("bottom").classList.toggle("hidden", spawning);
+  if (spawning) setText($("spawn-count"), Math.ceil(game.sp / 10) + "s");
   const banner = $("banner");
   if (game.paused) { setText(banner, "Paused"); banner.classList.remove("hidden"); }
   else if (!me.alive && !game.over) { setText(banner, "You were eliminated — spectating"); banner.classList.remove("hidden"); }
@@ -252,9 +258,10 @@ net.onmsg = (m: ServerMsg) => {
     case "start": {
       started = true;
       game = new ClientGame(m);
+      show("game"); // the canvas needs layout before the camera can fit the map
       renderer.attach(game);
       const me = game.players.get(game.you);
-      if (me) renderer.centerOn(me.cap, Math.max(renderer.cam.zoom, window.innerWidth < 700 ? 6 : 9));
+      if (me && game.sp === 0) renderer.centerOn(me.cap, Math.max(renderer.cam.zoom, window.innerWidth < 700 ? 6 : 9));
       $("over").classList.add("hidden");
       buildType = null;
       show("game");
@@ -262,7 +269,14 @@ net.onmsg = (m: ServerMsg) => {
       break;
     }
     case "tick":
-      if (game) for (const e of game.applyTick(m)) toast(e);
+      if (game) {
+        const was = game.sp;
+        for (const e of game.applyTick(m)) toast(e);
+        if (was > 0 && game.sp === 0) {
+          const me = game.players.get(game.you);
+          if (me) renderer.centerOn(me.cap, Math.max(renderer.cam.zoom, window.innerWidth < 700 ? 6 : 9));
+        }
+      }
       break;
     case "paused":
       if (game) game.paused = m.paused;

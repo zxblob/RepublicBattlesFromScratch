@@ -47,6 +47,8 @@ export type ClientMsg =
   | { t: "attack"; poly: number[]; ratio: number }
   | { t: "build"; type: StructType; x: number; y: number }
   | { t: "cancel"; id: number }
+  | { t: "spawn"; x: number; y: number }
+  | { t: "ready" }
   | { t: "reinforce"; id: number; ratio: number }
   | { t: "pause" }
   | { t: "leave" };
@@ -67,6 +69,8 @@ export type ServerMsg =
       structs: StructInfo[];
       tick: number;
       paused: boolean;
+      /** spawn-phase ticks remaining */
+      sp: number;
     }
   | {
       t: "tick";
@@ -77,6 +81,8 @@ export type ServerMsg =
       a: AttackInfo[];
       s?: StructInfo[];
       ev?: string[];
+      sp: number;
+      caps?: [number, number][];
     }
   | { t: "paused"; paused: boolean }
   | { t: "over"; winner: number }

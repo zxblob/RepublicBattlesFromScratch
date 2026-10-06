@@ -19,6 +19,8 @@ export class ClientGame {
   over = false;
   winner = 0;
   tick = 0;
+  /** spawn-phase ticks remaining */
+  sp = 0;
   /** tiles changed since the renderer last repainted */
   dirty: number[] = [];
   landTiles = 0;
@@ -34,6 +36,7 @@ export class ClientGame {
     this.structs = m.structs;
     this.paused = m.paused;
     this.tick = m.tick;
+    this.sp = m.sp;
     for (let i = 0; i < this.terrain.length; i++) if (this.terrain[i] !== Terrain.Water) this.landTiles++;
     for (const p of m.players) this.stats.set(p.id, { troops: 0, gold: 0, tiles: 0, alive: true });
     for (let i = 0; i < this.owner.length; i++) {
@@ -54,6 +57,8 @@ export class ClientGame {
       if (s) { s.troops = troops; s.gold = gold; s.tiles = tiles; s.alive = !!alive; }
     }
     this.attacks = m.a;
+    this.sp = m.sp;
+    if (m.caps) for (const [id, cap] of m.caps) { const p = this.players.get(id); if (p) p.cap = cap; }
     if (m.s) this.structs = m.s;
     return m.ev ?? [];
   }

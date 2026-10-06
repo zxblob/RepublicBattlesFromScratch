@@ -103,6 +103,37 @@ describe("reinforce", () => {
   });
 });
 
+describe("spawn phase", () => {
+  it("moves the start only while the phase is active", () => {
+    const g = makeGame(1);
+    const p = g.players[1];
+    const old = p.capital;
+    expect(g.respawn(1, 20, 20).error).toBe("spawn phase is over");
+    g.spawnTicks = 50;
+    // find a valid flat-land patch by trial
+    let moved = false;
+    for (let y = 8; y < g.h - 8 && !moved; y++) for (let x = 8; x < g.w - 8 && !moved; x++) {
+      if (Math.hypot(x - (old % g.w), y - ((old / g.w) | 0)) > 20 && g.respawn(1, x, y).ok) moved = true;
+    }
+    expect(moved).toBe(true);
+    expect(p.capital).not.toBe(old);
+    expect(g.owner[old]).toBe(0);
+    expect(g.capDirty.length).toBe(1);
+  });
+  it("blocks attacks and economy during the phase", () => {
+    const g = makeGame(1);
+    g.spawnTicks = 5;
+    const p = g.players[1];
+    const cx = p.capital % g.w, cy = (p.capital / g.w) | 0;
+    expect(g.launchAttack(1, [cx - 8, cy - 8, cx + 8, cy - 8, cx + 8, cy + 8, cx - 8, cy + 8], 0.5).ok).toBe(false);
+    const t = p.troops;
+    g.tick();
+    expect(p.troops).toBe(t);
+    for (let i = 0; i < 6; i++) g.tick();
+    expect(p.troops).toBeGreaterThan(t);
+  });
+});
+
 describe("structures", () => {
   it("charges gold and refuses enemy land", () => {
     const g = makeGame(1);

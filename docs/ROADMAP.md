@@ -50,4 +50,4 @@ Order: attack-feel/range polish → units → World War mode → persistence →
   Train, Atom / Hydrogen bomb, MIRV; FFA + Team modes; alliances.
 - Decision: owner wants all of these eventually. Suggested grouping: Economy (Port, City, Factory, Trade Ship, Train),
   Defence (Bunker, SAM, Wall), Offence (Tank, Airbase, Warship, Transport, nukes), Diplomacy (alliances, teams).
-- Next small items: spawn-selection phase, real-world-style map presets, pause/restart/settings menu.
+- Done: spawn-selection phase (20 s, Ready button). Next small items: real-world-style map presets, pause/restart/settings menu.

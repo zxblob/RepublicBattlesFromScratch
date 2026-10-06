@@ -13,12 +13,15 @@ const BOT_NAMES = [
   "Quillon", "Rivenia", "Solmere", "Tarsus", "Umbria", "Valtara", "Westmark", "Xanthe",
 ];
 
+const SPAWN_TICKS = 200; // 20 s to pick a start
+
 interface Client {
   token: string;
   name: string;
   ws: WebSocket | null;
   playerId: number;
   attackBudget: number;
+  ready: boolean;
 }
 
 export class Room {
@@ -46,7 +49,7 @@ export class Room {
       existing.ws = ws;
       return existing;
     }
-    const c: Client = { token: randomBytes(12).toString("hex"), name: cleanName(name), ws, playerId: 0, attackBudget: 5 };
+    const c: Client = { token: randomBytes(12).toString("hex"), name: cleanName(name), ws, playerId: 0, attackBudget: 5, ready: false };
     this.clients.set(c.token, c);
     if (!this.hostToken) this.hostToken = c.token;
     return c;
@@ -98,6 +101,7 @@ export class Room {
     game.spawnAll();
     this.game = game;
     game.dirty = [];
+    game.spawnTicks = SPAWN_TICKS;
     for (const c of humans) this.sendStart(c);
     this.timer = setInterval(() => this.tick(), CFG.tickMs);
     return null;
@@ -108,7 +112,7 @@ export class Room {
     this.send(c, {
       t: "start", you: c.playerId, seed: g.seed, w: g.w, h: g.h,
       players: g.players.slice(1).map((p) => ({ id: p.id, name: p.name, color: p.color, isBot: p.isBot, cap: p.capital })),
-      owners: rle(g.owner), structs: this.structInfos(), tick: g.tickNo, paused: this.paused,
+      owners: rle(g.owner), structs: this.structInfos(), tick: g.tickNo, paused: this.paused, sp: g.spawnTicks,
     });
   }
 
@@ -123,6 +127,18 @@ export class Room {
         if (c.token !== this.hostToken) return this.send(c, { t: "error", msg: "only the host can start" });
         const err = this.start(msg.bots);
         if (err) this.send(c, { t: "error", msg: err });
+        return;
+      }
+      case "spawn": {
+        if (!g || !c.playerId) return;
+        const r = g.respawn(c.playerId, Math.floor(Number(msg.x)), Math.floor(Number(msg.y)));
+        if (!r.ok) this.send(c, { t: "error", msg: r.error ?? "can't spawn there" });
+        return;
+      }
+      case "ready": {
+        if (!g || !c.playerId) return;
+        c.ready = true;
+        if ([...this.clients.values()].filter((x) => x.ws).every((x) => x.ready)) g.spawnTicks = Math.min(g.spawnTicks, 10);
         return;
       }
       case "pause":
@@ -170,6 +186,8 @@ export class Room {
       const pl = g.players[id];
       p.push([id, Math.floor(pl.troops), Math.floor(pl.gold), pl.tiles, pl.alive ? 1 : 0]);
     }
+    const caps = g.capDirty.length ? g.capDirty : undefined;
+    g.capDirty = [];
     const structs = g.structDirty ? this.structInfos() : undefined;
     g.structDirty = false;
     const ev = g.events.map((e) => {
@@ -198,7 +216,7 @@ export class Room {
           if (near) a.push({ id: at.id, by: at.by, on: at.on, x: at.cx, y: at.cy, pool: Math.floor(at.pool), left: at.tiles.size });
         }
       }
-      this.send(c, { t: "tick", n: g.tickNo, d, p, a, s: structs, ev: ev.length ? ev : undefined });
+      this.send(c, { t: "tick", n: g.tickNo, d, p, a, s: structs, ev: ev.length ? ev : undefined, sp: g.spawnTicks, caps });
     }
     if (g.over) {
       this.broadcast({ t: "over", winner: g.winner });

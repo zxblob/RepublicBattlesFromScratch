@@ -73,6 +73,10 @@ export class Game {
   readonly landTiles: number;
 
   tickNo = 0;
+  /** while > 0 the match is in the spawn-selection phase: no economy, no attacks, players may move their start */
+  spawnTicks = 0;
+  /** [playerId, tile] capital moves since the server last drained them */
+  capDirty: [number, number][] = [];
   over = false;
   winner = 0;
   /** tile indices whose owner changed since the server last drained them */
@@ -156,6 +160,40 @@ export class Game {
       }
       this.players[id].capital = c;
     }
+  }
+
+  /** Move a player's starting patch during the spawn phase. */
+  respawn(pid: number, x: number, y: number): Result {
+    const p = this.players[pid];
+    if (!p || !p.alive) return { ok: false, error: "not in game" };
+    if (this.spawnTicks <= 0) return { ok: false, error: "spawn phase is over" };
+    const r = Math.ceil(Math.sqrt(CFG.spawnRadius2));
+    if (!Number.isInteger(x) || !Number.isInteger(y) || x < r || y < r || x >= this.w - r || y >= this.h - r) {
+      return { ok: false, error: "too close to the edge" };
+    }
+    if (!this.discIsFlatLand(x, y)) return { ok: false, error: "needs flat land" };
+    for (let dy = -r - 1; dy <= r + 1; dy++) {
+      for (let dx = -r - 1; dx <= r + 1; dx++) {
+        const o = this.owner[(y + dy) * this.w + x + dx];
+        if (o && o !== pid) return { ok: false, error: "too close to another nation" };
+      }
+    }
+    for (let id = 1; id < this.players.length; id++) {
+      const o = this.players[id];
+      if (id === pid || o.capital < 0) continue;
+      if (Math.hypot((o.capital % this.w) - x, ((o.capital / this.w) | 0) - y) < 12) {
+        return { ok: false, error: "too close to another nation" };
+      }
+    }
+    for (let i = 0; i < this.owner.length; i++) if (this.owner[i] === pid) this.setOwner(i, 0);
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy <= CFG.spawnRadius2) this.setOwner((y + dy) * this.w + x + dx, pid);
+      }
+    }
+    p.capital = y * this.w + x;
+    this.capDirty.push([pid, p.capital]);
+    return { ok: true };
   }
 
   private discIsFlatLand(cx: number, cy: number): boolean {
@@ -257,6 +295,7 @@ export class Game {
   launchAttackTiles(pid: number, rawTiles: number[], ratio: number): Result<{ id: number }> {
     const p = this.players[pid];
     if (!p || !p.alive || this.over) return { ok: false, error: "not in game" };
+    if (this.spawnTicks > 0) return { ok: false, error: "choose your start first" };
     if (!Number.isFinite(ratio)) return { ok: false, error: "bad ratio" };
     ratio = Math.max(0.02, Math.min(1, ratio));
     if (this.attacksOf(pid).length >= CFG.maxAttacksPerPlayer) return { ok: false, error: "too many attacks" };
@@ -378,6 +417,7 @@ export class Game {
   build(pid: number, type: StructType, x: number, y: number): Result<{ id: number }> {
     const p = this.players[pid];
     if (!p || !p.alive || this.over) return { ok: false, error: "not in game" };
+    if (this.spawnTicks > 0) return { ok: false, error: "choose your start first" };
     if (!(type in CFG.structures)) return { ok: false, error: "unknown structure" };
     if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= this.w || y >= this.h) {
       return { ok: false, error: "bad position" };
@@ -401,6 +441,7 @@ export class Game {
   tick(): void {
     if (this.over) return;
     this.tickNo++;
+    if (this.spawnTicks > 0) { this.spawnTicks--; return; }
     for (const a of [...this.attacks]) this.stepAttack(a);
 
     const banks = new Map<number, number>();
