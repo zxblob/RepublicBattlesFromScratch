@@ -1,7 +1,7 @@
 /** Loads the pixel-art PNGs and tints their team-colour pixels per owner. Falls back to null until loaded. */
 export const SPRITE_NAMES = [
   "bunker", "barracks", "bank", "radar", "tankfactory", "airbase", "sam", "factory", "port", "city", "farm", "lab",
-  "silo", "spaceport", "tank", "fighter", "bomber", "transport", "warship", "trade", "missile", "capital",
+  "silo", "spaceport", "tank", "fighter", "bomber", "transport", "warship", "trade", "train", "missile", "capital",
 ] as const;
 export type SpriteName = (typeof SPRITE_NAMES)[number];
 

@@ -27,6 +27,8 @@ export class ClientGame {
   missiles: MissileInfo[] = [];
   walls = new Map<number, number>();
   rails = new Uint8Array(0);
+  /** bumped whenever rails or structures change, so the renderer can rebuild its trains */
+  railVersion = 0;
   /** dominance countdown ticks and leader id */
   dm = 0;
   dl = 0;
@@ -62,6 +64,7 @@ export class ClientGame {
     unrle(m.owners, this.owner);
     this.rails = new Uint8Array(m.w * m.h);
     for (const t of m.rails) this.rails[t] = 1;
+    this.railVersion++;
     for (const p of m.players) { this.players.set(p.id, p); if (p.skin) this.loadSkin(p.id, p.skin); }
     this.structs = m.structs;
     this.units = m.units;
@@ -111,12 +114,12 @@ export class ClientGame {
     this.me_ = m.me;
     this.dm = m.dm;
     this.dl = m.dl;
-    if (m.rl) for (const [t, v] of m.rl) { this.rails[t] = v; this.dirty.push(t); }
+    if (m.rl) { for (const [t, v] of m.rl) { this.rails[t] = v; this.dirty.push(t); } this.railVersion++; }
     if (m.sk) for (const [id, data] of m.sk) { const p = this.players.get(id); if (p) p.skin = data; this.loadSkin(id, data); }
     if (m.w) for (const [t, hp] of m.w) { if (hp > 0) this.walls.set(t, hp); else this.walls.delete(t); this.dirty.push(t); }
     this.sp = m.sp;
     if (m.caps) for (const [id, cap] of m.caps) { const p = this.players.get(id); if (p) p.cap = cap; }
-    if (m.s) this.structs = m.s;
+    if (m.s) { this.structs = m.s; this.railVersion++; }
     return m.ev ?? [];
   }
 

@@ -35,7 +35,7 @@ Written from scratch (TypeScript, Node, WebSocket, Canvas). MIT licensed.
 - **Research:** Economy, Military, Defence (and Space) branches, per player, permanent for the match.
 - **Premade maps:** Earth, Europe, North America, South America, Africa, Asia and Oceania, rasterised from Natural Earth (public domain) coastlines; bots are named after countries. Mountains are synthetic. Regenerate with `node scripts/make-maps.mjs ne_50m_land.geojson`.
 - **Nukes:** Atom bomb, Hydrogen bomb (big radius) and MIRV (six warheads), launched from silos, interceptable by SAMs.
-- **Economy extras:** Factories, drawable Rails: draw a line from one City/Factory/Port to another and the ends snap onto nearby buildings. A connected network pays gold for every linked building, and rails can run across **allied land** to link your bases with an ally's (+50% income, shared between you; breaking the alliance cuts the line). Also automatic Trade Ships between ports (embargo-able), donating troops or gold to allies, quick chat and emoji pings.
+- **Economy extras:** Factories, drawable Rails: draw a line from one City/Factory/Port to another and the ends snap onto nearby buildings. A connected network pays gold for every linked building, and trains shuttle along the line between the buildings it links (cosmetic), and rails can run across **allied land** to link your bases with an ally's (+50% income, shared between you; breaking the alliance cuts the line). Also automatic Trade Ships between ports (embargo-able), donating troops or gold to allies, quick chat and emoji pings.
 - **Victory timers:** a clear leader triggers a 5-minute dominance countdown (lobby option); every game has a 2-hour limit.
 - **Maps:** small to huge (1024×640) procedural maps, an Islands option, and custom maps from the in-browser **map editor** (`/editor.html`, Pencil supported). Publish to get a code, enter it when starting a game.
 - **Pixel sprites:** 22 original 32×32 top-down sprites in `resources/sprites/` (buildings, tanks, planes, boats, missile, capital flag). Magenta pixels are recoloured to each nation's colour at runtime. Regenerate with `node scripts/make-sprites.mjs`, or replace the PNGs with your own art using the same file names (keep magenta `#FF00FF`, `#AA00AA`, `#FFAAFF` for team colour). If a PNG fails to load the game falls back to vector shapes.
@@ -88,4 +88,4 @@ that prefix to the server and strip it.
 - `src/core` deterministic simulation (map, combat, bots, structures), shared by server and client
 - `src/server` HTTP + WebSocket rooms, 10 ticks/s, authoritative
 - `src/client` canvas renderer, pointer/pen input, UI
-- Known limits: no fog of war; huge maps send every change to every player (fine for LAN-size groups).
+- Known limits: no fog of war; trains are cosmetic (income is per network); huge maps send every change to every player (fine for LAN-size groups).
