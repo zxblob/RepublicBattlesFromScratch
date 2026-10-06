@@ -1,6 +1,7 @@
 import { CFG, StructType } from "../core/config";
 import { Terrain } from "../core/mapgen";
 import { fmt } from "./format";
+import { Sprites } from "./sprites";
 import type { ClientGame } from "./state";
 
 export interface Camera { x: number; y: number; zoom: number }
@@ -37,14 +38,23 @@ export class Renderer {
   private mapDirty = false;
   /** bounding box of tiles repainted since the last upload (x0,y0,x1,y1) */
   private rect = [0, 0, 0, 0];
-  private sprites = new Map<string, HTMLCanvasElement>();
+  private iconCache = new Map<string, HTMLCanvasElement>();
   /** render-resolution multiplier, lowered automatically on slow devices */
   scale = 1;
+  readonly sprites = new Sprites();
+  private heading = new Map<number, number>();
   cw = 0;
   ch = 0;
   private dpr = 1;
 
-  constructor(private canvas: HTMLCanvasElement) {}
+  constructor(private canvas: HTMLCanvasElement) {
+    this.sprites.onload = () => this.sprites_ready();
+    this.sprites.load("sprites/");
+  }
+
+  /** called once pixel sprites finish loading */
+  onSprites: () => void = () => {};
+  private sprites_ready(): void { this.sprites.ready = true; this.onSprites(); }
 
   attach(g: ClientGame): void {
     this.g = g;
@@ -171,8 +181,10 @@ export class Renderer {
 
   /** Pre-rendered structure icon (one per type+colour) so drawing hundreds of buildings is just blits. */
   private sprite(type: StructType, color: number): HTMLCanvasElement {
+    const px = this.sprites.get(type, color);
+    if (px) return px;
     const key = type + color;
-    let c = this.sprites.get(key);
+    let c = this.iconCache.get(key);
     if (c) return c;
     c = document.createElement("canvas");
     c.width = c.height = 40;
@@ -189,7 +201,7 @@ export class Renderer {
     x.textAlign = "center";
     x.textBaseline = "middle";
     x.fillText(GLYPH[type], 20, 21);
-    this.sprites.set(key, c);
+    this.iconCache.set(key, c);
     return c;
   }
 
@@ -234,6 +246,13 @@ export class Renderer {
     ctx.textBaseline = "middle";
     for (const p of g.players.values()) {
       if (g.owner[p.cap] !== p.id) continue;
+      const cs = this.sprites.get("capital", p.color);
+      if (cs) {
+        const sz = Math.max(1.4, 10 / cam.zoom);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(cs, (p.cap % g.w) + 0.5 - sz, Math.floor(p.cap / g.w) + 0.5 - sz * 1.3, sz * 2, sz * 2);
+        continue;
+      }
       ctx.font = `${Math.max(1.6, 12 / cam.zoom)}px sans-serif`;
       ctx.fillStyle = "#fff";
       ctx.fillText("★", (p.cap % g.w) + 0.5, Math.floor(p.cap / g.w) + 0.5);
@@ -242,8 +261,9 @@ export class Renderer {
     // structures: cached sprites, only those on screen
     const vx0 = cam.x - this.cw / 2 / cam.zoom - 3, vx1 = cam.x + this.cw / 2 / cam.zoom + 3;
     const vy0 = cam.y - this.ch / 2 / cam.zoom - 3, vy1 = cam.y + this.ch / 2 / cam.zoom + 3;
-    const rr = Math.max(0.9, 8 / cam.zoom);
-    ctx.imageSmoothingEnabled = true;
+    const rr = Math.max(1.1, 11 / cam.zoom);
+    const crisp = this.sprites.ready;
+    ctx.imageSmoothingEnabled = !crisp;
     for (const s of g.structs) {
       if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue;
       const p = g.players.get(s.owner);
@@ -251,7 +271,8 @@ export class Renderer {
     }
     ctx.imageSmoothingEnabled = false;
 
-    // tanks
+    // units: pixel sprites rotated to their heading (vector shapes if the sprites failed to load)
+    const UNIT_SPRITE: Record<string, string> = { t: "tank", f: "fighter", b: "bomber", x: "transport", w: "warship", r: "trade" };
     for (const u of g.units) {
       const p = g.players.get(u.owner);
       const sel = u.owner === g.you && u.id === ov.selTank;
@@ -262,6 +283,35 @@ export class Renderer {
         ctx.strokeStyle = "rgba(255,230,120,0.9)";
         ctx.beginPath(); ctx.moveTo(u.x, u.y); ctx.lineTo(u.tx, u.ty); ctx.stroke();
         ctx.setLineDash([]);
+      }
+      const spr = this.sprites.get(UNIT_SPRITE[u.k], p ? p.color : 0x888888);
+      if (spr) {
+        if (u.tx >= 0) this.heading.set(u.id, Math.atan2(u.ty - u.y, u.tx - u.x) + Math.PI / 2);
+        const a = this.heading.get(u.id) ?? 0;
+        const size = Math.max(1.3, 13 / cam.zoom) * (u.k === "b" ? 1.25 : u.k === "w" ? 1.2 : u.k === "r" ? 0.8 : 1);
+        ctx.imageSmoothingEnabled = false;
+        ctx.save();
+        ctx.translate(u.x, u.y);
+        ctx.rotate(a);
+        ctx.drawImage(spr, -size, -size, size * 2, size * 2);
+        ctx.restore();
+        if (sel) {
+          ctx.beginPath();
+          ctx.arc(u.x, u.y, size * 1.1, 0, Math.PI * 2);
+          ctx.lineWidth = Math.max(0.12, 2.5 / cam.zoom);
+          ctx.strokeStyle = "#ffe678";
+          ctx.stroke();
+        }
+        const tag = u.k === "b" ? String(u.ammo) : u.k === "x" && u.cargo ? fmt(u.cargo / CFG.displayScale) : "";
+        if (tag && cam.zoom > 5) {
+          ctx.fillStyle = "#fff";
+          ctx.strokeStyle = "rgba(0,0,0,0.8)";
+          ctx.lineWidth = Math.max(0.1, 2 / cam.zoom);
+          ctx.font = `bold ${Math.max(0.9, 11 / cam.zoom)}px sans-serif`;
+          ctx.strokeText(tag, u.x, u.y + size * 1.25);
+          ctx.fillText(tag, u.x, u.y + size * 1.25);
+        }
+        continue;
       }
       ctx.fillStyle = p ? css(mix(p.color, 0x000000, 0.25)) : "#444";
       ctx.lineWidth = Math.max(0.12, (sel ? 3 : 1.5) / cam.zoom);
@@ -307,10 +357,21 @@ export class Renderer {
       ctx.strokeStyle = "rgba(255,120,80,0.7)";
       ctx.beginPath(); ctx.moveTo(m.sx, m.sy); ctx.lineTo(m.tx, m.ty); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.arc(x, y, Math.max(0.7, 5 / cam.zoom), 0, Math.PI * 2);
-      ctx.fillStyle = "#ff6b3d";
-      ctx.fill();
+      const ms = this.sprites.get("missile", 0xffffff);
+      if (ms) {
+        const sz = Math.max(1.1, 10 / cam.zoom);
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.atan2(m.ty - m.sy, m.tx - m.sx) + Math.PI / 2);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(ms, -sz, -sz, sz * 2, sz * 2);
+        ctx.restore();
+      } else {
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(0.7, 5 / cam.zoom), 0, Math.PI * 2);
+        ctx.fillStyle = "#ff6b3d";
+        ctx.fill();
+      }
       ctx.beginPath();
       ctx.arc(m.tx, m.ty, m.radius, 0, Math.PI * 2);
       ctx.strokeStyle = "rgba(255,80,60,0.45)";

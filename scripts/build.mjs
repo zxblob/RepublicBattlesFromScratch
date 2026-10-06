@@ -28,6 +28,7 @@ await build({
 
 await cp("src/client/static", "dist/public", { recursive: true });
 await cp("maps/premade", "dist/maps", { recursive: true });
+await cp("resources/sprites", "dist/public/sprites", { recursive: true });
 console.log("built -> dist/");
 
 // cache-bust the entry script so deploys are picked up immediately

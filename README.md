@@ -36,6 +36,7 @@ Written from scratch (TypeScript, Node, WebSocket, Canvas). MIT licensed.
 - **Economy extras:** Factories, drawable Rails that link Cities/Factories/Ports for income, automatic Trade Ships between ports (embargo-able), donating troops or gold to allies, quick chat and emoji pings.
 - **Victory timers:** a clear leader triggers a 5-minute dominance countdown (lobby option); every game has a 2-hour limit.
 - **Maps:** small to huge (1024×640) procedural maps, an Islands option, and custom maps from the in-browser **map editor** (`/editor.html`, Pencil supported). Publish to get a code, enter it when starting a game.
+- **Pixel sprites:** 22 original 32×32 top-down sprites in `resources/sprites/` (buildings, tanks, planes, boats, missile, capital flag). Magenta pixels are recoloured to each nation's colour at runtime. Regenerate with `node scripts/make-sprites.mjs`, or replace the PNGs with your own art using the same file names (keep magenta `#FF00FF`, `#AA00AA`, `#FFAAFF` for team colour). If a PNG fails to load the game falls back to vector shapes.
 - **Country image:** upload a picture that is tiled over your land.
 - **Save games:** the server saves running games to `data/saves` (autosave, host's 💾 button, and on shutdown). After a restart a saved game comes back **paused** under the same lobby code; players reconnect and the host presses play.
 

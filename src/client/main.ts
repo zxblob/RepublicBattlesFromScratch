@@ -169,6 +169,7 @@ $("over-ok").onclick = () => { $("over").classList.add("hidden"); leave(); };
 // ---- game UI -------------------------------------------------------------------------------------
 const canvas = $<HTMLCanvasElement>("c");
 const renderer = new Renderer(canvas);
+renderer.onSprites = () => { forceDraw = true; iconify(); };
 const ov: Overlay = { lasso: [], ghosts: [], hover: null, buildType: null, ringAt: null, selTank: 0, wallDraft: false, missileAim: false };
 
 const ratioEl = $<HTMLInputElement>("ratio");
@@ -280,6 +281,20 @@ for (const u of UNITS) {
   b.onclick = () => net.send({ t: "train", kind: u.k });
   $("trains").appendChild(b);
   trainBtns.push(b);
+}
+
+// pixel icons on the build / unit buttons once the sprites are loaded
+function iconify(): void {
+  const put = (b: HTMLElement, name: string) => {
+    const c = renderer.sprites.get(name, 0x4aa3ff);
+    if (!c || b.querySelector("img.ic")) return;
+    const im = document.createElement("img");
+    im.className = "ic";
+    im.src = c.toDataURL();
+    b.prepend(im);
+  };
+  for (const [type, b] of buildBtns) put(b, type);
+  UNITS.forEach((u, i) => put(trainBtns[i], { t: "tank", f: "fighter", b: "bomber", x: "transport", w: "warship" }[u.k as "t"]));
 }
 
 // panels

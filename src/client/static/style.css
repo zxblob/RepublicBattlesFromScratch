@@ -123,3 +123,6 @@ summary { cursor: pointer; font-weight: 600; }
 .emoji-grid button { font-size: 22px; padding: 8px 4px; }
 .emoji-grid button.txt { font-size: 12px; grid-column: span 2; }
 .prow .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+img.ic { width: 22px; height: 22px; image-rendering: pixelated; vertical-align: middle; margin-right: 6px; }
+#builds button img.ic { float: left; margin-top: 4px; }
