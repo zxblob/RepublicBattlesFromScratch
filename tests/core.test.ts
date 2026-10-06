@@ -89,6 +89,20 @@ describe("combat", () => {
   });
 });
 
+describe("reinforce", () => {
+  it("adds troops from the owner's pool to a running attack", () => {
+    const g = makeGame(1);
+    const p = g.players[1];
+    const cx = p.capital % g.w, cy = (p.capital / g.w) | 0;
+    const res = g.launchAttack(1, [cx - 8, cy - 8, cx + 8, cy - 8, cx + 8, cy + 8, cx - 8, cy + 8], 0.3);
+    const a = g.attacks.find((x) => x.id === res.data!.id)!;
+    const before = a.pool;
+    expect(g.reinforceAttack(1, a.id, 0.5).ok).toBe(true);
+    expect(a.pool).toBeGreaterThan(before);
+    expect(g.reinforceAttack(1, 999, 0.5).ok).toBe(false);
+  });
+});
+
 describe("structures", () => {
   it("charges gold and refuses enemy land", () => {
     const g = makeGame(1);

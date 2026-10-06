@@ -145,6 +145,12 @@ export class Room {
         if (!r.ok) this.send(c, { t: "error", msg: r.error ?? "build failed" });
         return;
       }
+      case "reinforce": {
+        if (!g || this.paused || !c.playerId) return;
+        const r = g.reinforceAttack(c.playerId, Number(msg.id), Number(msg.ratio));
+        if (!r.ok) this.send(c, { t: "error", msg: r.error ?? "failed" });
+        return;
+      }
       case "cancel":
         if (g && c.playerId) g.cancelAttack(c.playerId, Number(msg.id));
         return;

@@ -121,12 +121,44 @@ const input = new Input(canvas, renderer, {
     if (ov.ghosts.length > 6) ov.ghosts.shift();
   },
   onTap(wx, wy) {
-    if (!game || !buildType) return;
+    if (!game) return;
+    if (!buildType && openAttackMenu(wx, wy)) return;
+    closeAttackMenu();
+    if (!buildType) return;
     net.send({ t: "build", type: buildType, x: Math.floor(wx), y: Math.floor(wy) });
     buildType = null;
     refreshBuilds();
   },
 });
+
+// ---- attack marker menu: reinforce or retreat ----
+let menuAttack = 0;
+function closeAttackMenu(): void { menuAttack = 0; $("attack-menu").classList.add("hidden"); }
+function openAttackMenu(wx: number, wy: number): boolean {
+  if (!game) return false;
+  const z = renderer.cam.zoom;
+  let best: (typeof game.attacks)[number] | null = null, bd = 28 / z;
+  for (const a of game.attacks) {
+    if (a.by !== game.you || a.x === undefined || a.y === undefined) continue;
+    const d = Math.hypot(a.x - wx, a.y - wy);
+    if (d < bd) { bd = d; best = a; }
+  }
+  if (!best) return false;
+  menuAttack = best.id;
+  const m = $("attack-menu");
+  const sx = renderer.cw / 2 + (best.x! - renderer.cam.x) * z;
+  const sy = renderer.ch / 2 + (best.y! - renderer.cam.y) * z;
+  m.style.left = Math.max(120, Math.min(renderer.cw - 120, sx)) + "px";
+  m.style.top = Math.max(60, Math.min(renderer.ch - 190, sy)) + "px";
+  $("am-title").textContent = `Attack · ${fmt(best.pool ?? 0)} troops`;
+  m.classList.remove("hidden");
+  return true;
+}
+for (const b of document.querySelectorAll<HTMLButtonElement>("#attack-menu [data-r]")) {
+  b.onclick = () => { net.send({ t: "reinforce", id: menuAttack, ratio: Number(b.dataset.r) }); closeAttackMenu(); };
+}
+$("am-retreat").onclick = () => { net.send({ t: "cancel", id: menuAttack }); closeAttackMenu(); };
+$("am-close").onclick = closeAttackMenu;
 
 window.addEventListener("resize", () => { if (game) { renderer.resize(); forceDraw = true; } });
 

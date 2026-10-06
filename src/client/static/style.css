@@ -75,3 +75,7 @@ button.icon { margin-left: auto; padding: 0 14px; background: var(--panel); } bu
   #board { top: calc(var(--safe-t) + 60px); font-size: 11px; min-width: 0; padding-right: 8px; opacity: 0.9; }
   #alerts { top: calc(var(--safe-t) + 60px); max-width: 55%; font-size: 13px; }
 }
+
+#attack-menu { position: absolute; transform: translate(-50%, 12px); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 14px; padding: 10px; display: grid; gap: 8px; z-index: 5; min-width: 220px; }
+#attack-menu .row button { flex: 1; padding: 8px 6px; }

@@ -290,6 +290,20 @@ export class Game {
     return true;
   }
 
+  /** Add `ratio` of the owner's current troops to a running attack. */
+  reinforceAttack(pid: number, id: number, ratio: number): Result {
+    const a = this.attacks.find((x) => x.id === id && x.by === pid);
+    const p = this.players[pid];
+    if (!a || !p?.alive) return { ok: false, error: "attack not found" };
+    if (!Number.isFinite(ratio)) return { ok: false, error: "bad ratio" };
+    const add = p.troops * Math.max(0.02, Math.min(1, ratio));
+    if (add < 5) return { ok: false, error: "not enough troops" };
+    p.troops -= add;
+    a.pool += add;
+    a.stall = 0;
+    return { ok: true };
+  }
+
   private touches(tile: number, pid: number): boolean {
     const { w, owner } = this;
     const x = tile % w;

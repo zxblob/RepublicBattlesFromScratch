@@ -47,6 +47,7 @@ export type ClientMsg =
   | { t: "attack"; poly: number[]; ratio: number }
   | { t: "build"; type: StructType; x: number; y: number }
   | { t: "cancel"; id: number }
+  | { t: "reinforce"; id: number; ratio: number }
   | { t: "pause" }
   | { t: "leave" };
 
