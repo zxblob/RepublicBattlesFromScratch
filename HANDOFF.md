@@ -1,6 +1,6 @@
 # Republic Battles: handoff
 
-Written at the end of the build session (2026-10-06). Repo: `git@github.com:zxblob/RepublicBattlesFromScratch.git` (branch `main`, 24+ commits, MIT).
+Written at the end of the build session (2026-10-06); section 5 rewritten after the FrontWars comparison research. Repo: `git@github.com:zxblob/RepublicBattlesFromScratch.git` (branch `main`, 24+ commits, MIT).
 Local working copy used in the session: `/home/zxblob/Projects/republicbattles`.
 
 ---
@@ -134,17 +134,52 @@ Draw-to-invade = lasso region touching your border; TypeScript + Node authoritat
 
 ---
 
-## 5. Next steps (suggested order)
+## 5. Current mission: get closer to MSN FrontWars (research notes + plan)
 
-1. **Playtest and fix** on a phone, a tablet with Pencil, and with 2+ humans in a lobby (spawn phase, lasso feel, radial menu, long-press cards, co-op). Collect FPS-overlay numbers from the owner.
-2. **Deploy dry-run:** build the Docker image, run with a volume on `/app/data`, put nginx/Caddy in front (WS upgrade), confirm save/resume survives a container restart.
-3. **Performance:** area-of-interest filtering for huge maps (clients send viewport, server filters tile diffs + resyncs chunks on pan); find the 135 ms spike; profile client with hundreds of structures.
-4. **War of the Worlds polish:** let non-launching players join the planet (or a second chance), more planet modifiers, clearer space-race UI.
-5. **Bots:** use rails/walls, smarter boats and tank/air coordination; run `tests`-style balance sims (examples used throughout: build a `Game`, add bots, tick 12000, print tiles).
-6. **UX:** grey out invalid radial options, tutorial/onboarding, settings/pause/restart menu, sounds/music, better touch affordances for unit control, show rail/train income in the HUD.
-7. **Art:** the owner may supply their own 32x32 sprites (same file names, keep the three magenta team shades); consider animation frames and tile texture polish.
-8. **Tests:** add Playwright (or similar) for lobby -> spawn -> build -> attack, and a mobile-viewport smoke test.
-9. **Later/optional ideas:** replays/spectator mode, fog of war (owner declined for now), accounts/leaderboards, image moderation tooling, real elevation for premade maps.
+Owner feedback after playing: **"I like the gameplay, but our game is too easy, and the Huge map feels small."** Next session's job is to fix those two things and move the feel closer to FrontWars.
+
+### 5.1 What was researched (and what could not be)
+- **MSN FrontWars itself could not be studied this session.** `msn.com/en-us/play/games/frontwars/` redirects to the MSN home page behind a cookie wall; `WebFetch` gets nothing (JS shell). If you retry, use the browser pane, decline cookies, find the game via MSN Games search, and sit through the ads. Do not copy art/code (see section 1), but watching pacing, map size and bot behaviour is fine.
+- **Same game family, documented:** OpenFront.io / frontwars.io (wiki: openfront.miraheze.org "Combat" and "Attacking Guide", openfront.fyi, openfrontpro.com). Facts worth borrowing:
+  - Win condition: own ~72% of the map (frontwars.io); we use dominance countdown at 35% and 1.5x the runner-up.
+  - Troop growth is *slow and capped*: `add = (10 + troops^0.73/4) * (1 - troops/maxTroops)` per tick, `maxTroops = 2*(tiles^0.6*1000 + 50000)` (+ cities). Growth is sub-linear in land, so big empires are not exponential.
+  - **Attack ratio slider** (1/2 keys, default ~20-50%): you commit a fraction of troops, and committed troops are *gone* from your pool, so over-extending leaves you open. Retreating costs 25% of the attack troops.
+  - Combat: losses per tile depend on terrain (plains 0.8, highland/mountain worse), **Defense Post in range = 5x attacker losses and -66% attack speed**, troop ratio clamp 0.6-2.0, large empires get a penalty (attacker `(100000/tiles)^0.7`), big defenders a bonus, bots take 0.8x losses. Expansion speed is tick-based per tile (plains ~16 ticks, highlands 20, mountains 25), not "24 tiles per tick".
+  - Spawn immunity for a fixed number of turns; nations (AI) can have a different immunity than humans.
+  - **Nation AI difficulty levels** exist (Easy / Medium / Hard / Impossible), "smart" vs basic bots. Bots build defence posts, ports, SAMs, and attack humans that are weak or traitors.
+  - Controls: right-click radial menu, WASD pan, Q/E zoom, Space toggles terrain/political view, leaderboard (land / troops / gold), event panel (attacks, alliance requests), quick chat.
+
+### 5.2 Why our game is too easy (diagnosis from `src/core/config.ts` and `src/core/bots.ts`)
+1. **Every anti-snowball knob protects the human.** Bots wait 200 ticks (20 s) between player attacks, max 2 attackers per target, ratio capped 0.4 (0.2 vs small), never attack unless `troops >= 1.2 * target`, and stop acting under 35% troops. Combined with `defenderLossShare 0.6`, `playerCostMult 0.65` (conquest of players is cheap for the human) and the small-player/capital multipliers, a decent human always snowballs.
+2. **Bots are dumb builders:** `tryBuild` picks a random structure type each think, builds around the capital in a 9x9 box, never plans an economy, never uses rails/walls, and naval logic is random coastal tiles.
+3. **No difficulty setting.** Aggression is a random 0.6-1.4 per bot. There is nothing like Easy/Medium/Hard/Impossible.
+4. **Economy is generous:** `startTroops 120` vs `baseCap 100`, regen grows with `regenPerTile` linearly, conquest is fast (`maxTilesPerTick 24`), lasso lets the human cherry-pick weakly held tiles with no troop-ratio decision.
+5. **No attack-ratio decision:** `launchAttackTiles(..., ratio)` exists, but the human UI should expose a ratio slider like FrontWars/OpenFront so committing troops is a real trade-off.
+6. Conquest and growth are **not scaled by empire size**, so late game is a formality.
+
+### 5.3 Why "Huge" feels small
+- Huge = 1024x640 and tops out there, but **all pace constants are per-tile and map-independent**: `maxTilesPerTick 24`, `tankSpeed 0.35`, `transportSpeed 0.5`, `fighterSpeed 0.8`, `trainSpeed 0.4`, expansion cost per tile. A bigger map therefore does not take proportionally longer to cross or fill, and 60 bots (cap `MAX_BOTS.huge`) on ~330k land tiles fills fast.
+- Default camera (`render.ts` ~line 72) fits the whole map to the screen, so at 1024x640 it is ~1 px per tile, which reads as a tiny map. Spawn radius is a fixed `spawnRadius2: 10`, so starts are tiny compared to the world.
+- Real-world premade maps are the same tile counts as small randoms.
+- Only 4 sizes; no 2048x1280-class map (needs area-of-interest filtering first, see issues).
+
+### 5.4 Planned work, in order (each is a small, testable change)
+1. **Difficulty setting in lobby options** (`GameSetup.difficulty`: easy / normal / hard / impossible; plumb through `rooms.ts` `GameSetup`, `main.ts` options, `Game` options, snapshot). Per level scale: bot attack ratio cap, `botPlayerCooldown`, `botMaxAttackersPerTarget`, `1.2` troop threshold, `playerCostMult` / defender bonus applying to the human, bot regen and gold multipliers, bot build quality. Make **Normal roughly equal to today's Hard-ish**, keep today's behaviour as Easy.
+2. **Smarter bots** (`bots.ts`): weighted build order (economy first: city/farm/bank/port, then bunker on the contested front, SAM when enemy aircraft exist, silo late); retaliate against whoever attacked them; target the weakest/most-exposed neighbour (humans included) instead of random; coordinate 2-3 bots on a leader (only at hard+); use rails and walls; real naval invasions (pick targets by value, not random). Bots must still use the same public API as humans.
+3. **Attack-ratio slider** (keys 1/2 plus a HUD slider, default ~35%); committed troops leave the pool. Tune retreat cost (25% loss).
+4. **Slower, size-aware pacing**: replace `maxTilesPerTick` / per-tile speeds with values scaled by `sqrt(w*h)/sqrt(192*112)` (or per-size presets in `CFG`), terrain-dependent expansion speed (plains < highland < mountain), troop growth with the diminishing-returns formula above and a population cap that grows like `tiles^0.6`, and a large-empire penalty so leaders slow down.
+5. **Make Huge feel huge:** start the camera zoomed on the player's spawn (not fit-to-screen), keep a minimap (add one), raise bot counts for huge (80-100), larger spawn spacing and spawn radius with map size, add an **"Enormous" 2048x1280** only after area-of-interest filtering (client sends viewport; server filters tile diffs; resync on pan).
+6. **Victory at ~72% land** as a lobby option ("FrontWars rules"), keep dominance as the stalemate breaker.
+7. **FrontWars-style UI polish:** leaderboard (land / troops / gold), event panel for incoming attacks and alliance requests, Space to toggle terrain/political colours, WASD/QE camera keys, retreat button on active attacks.
+8. **Verify by simulation, not feel:** add a script/test that runs `Game` with a scripted "good human" (the existing bots) vs N bots per difficulty for 12000 ticks and prints survival and land share. Targets: Easy = human wins most games; Hard = a competent human survives but wins <50%; Impossible = rarely wins. Then the owner playtests.
+
+### 5.5 Older suggested next steps (still valid, lower priority)
+- Playtest on phone/tablet/Pencil and with 2+ humans; collect FPS-overlay numbers.
+- Docker dry-run behind nginx/Caddy; confirm save/resume survives a container restart.
+- Performance: area-of-interest filtering for huge maps (also needed for 5.4.5); find the 135 ms tick spike seen on huge/60 bots.
+- War of the Worlds polish; bots using rails/walls; grey out invalid radial options; tutorial, sounds, rail income in HUD.
+- Art: owner may supply own 32x32 sprites (same file names, keep the three magenta shades).
+- Playwright e2e and a mobile-viewport smoke test; replays/spectator; accounts/leaderboards.
 
 ---
 
