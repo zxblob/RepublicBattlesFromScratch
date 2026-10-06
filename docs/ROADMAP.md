@@ -42,3 +42,12 @@ Order: attack-feel/range polish → units → World War mode → persistence →
 - No fog of war; Radar keeps showing fronts and troop numbers.
 - Team mode in the lobby plus alliances in free-for-all (allies cannot attack each other; shared vision).
 - Open: the full feature list of the MSN FrontWars build (page is JS-only, could not be read automatically).
+
+## Feature inventory from reference games (names only; all to be built from scratch)
+- MSN FrontWars: real-world maps (e.g. Australia), **spawn-selection phase** ("Claim your homeland": click land, AI nation
+  start markers visible, countdown), pause / restart / settings / exit controls.
+- OpenFront: Port, City, Factory, Defense Post (our Bunker), SAM Launcher, Missile Silo, Warship, Transport, Trade Ship,
+  Train, Atom / Hydrogen bomb, MIRV; FFA + Team modes; alliances.
+- Decision: owner wants all of these eventually. Suggested grouping: Economy (Port, City, Factory, Trade Ship, Train),
+  Defence (Bunker, SAM, Wall), Offence (Tank, Airbase, Warship, Transport, nukes), Diplomacy (alliances, teams).
+- Next small items: spawn-selection phase, real-world-style map presets, pause/restart/settings menu.
