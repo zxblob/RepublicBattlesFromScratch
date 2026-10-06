@@ -17,11 +17,11 @@ await build({
 });
 
 await build({
-  entryPoints: ["src/client/main.ts"],
+  entryPoints: { main: "src/client/main.ts", editor: "src/client/editor.ts" },
   bundle: true,
   format: "esm",
   target: "es2020",
-  outfile: "dist/public/main.js",
+  outdir: "dist/public",
   minify: prod,
   sourcemap: !prod,
 });
@@ -35,3 +35,6 @@ const v = Date.now().toString(36);
 let html = await readFile("dist/public/index.html", "utf8");
 html = html.replace('src="main.js"', `src="main.js?v=${v}"`).replace('href="style.css"', `href="style.css?v=${v}"`);
 await writeFile("dist/public/index.html", html);
+let ed = await readFile("dist/public/editor.html", "utf8");
+ed = ed.replace('src="editor.js"', `src="editor.js?v=${v}"`).replace('href="style.css"', `href="style.css?v=${v}"`);
+await writeFile("dist/public/editor.html", ed);

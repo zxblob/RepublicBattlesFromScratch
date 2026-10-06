@@ -1,9 +1,9 @@
-import { CFG, STRUCT_TYPES, StructType } from "../core/config";
-import type { ServerMsg } from "../core/protocol";
+import { CFG, STRUCT_TYPES, StructType, TECH, TECH_IDS } from "../core/config";
+import type { GameSetup, ServerMsg, UnitK } from "../core/protocol";
+import { fmt } from "./format";
 import { Input } from "./input";
 import { loadSession, Net, saveSession } from "./net";
 import { Overlay, Renderer } from "./render";
-import { fmt } from "./format";
 import { ClientGame } from "./state";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -13,22 +13,31 @@ let isHost = false;
 let drawMode = false;
 let buildType: StructType | null = null;
 let hoverBuildBtn: StructType | null = null;
-let lastToast = "";
 let started = false;
+let panel: "" | "dip" | "res" = "";
+
+const store = {
+  get(k: string): string { try { return localStorage.getItem(k) ?? ""; } catch { return ""; } },
+  set(k: string, v: string): void { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+};
 
 const nameEl = $<HTMLInputElement>("name");
-nameEl.value = (() => { try { return localStorage.getItem("rb.name") ?? ""; } catch { return ""; } })();
+nameEl.value = store.get("rb.name");
 const myName = () => {
   const n = nameEl.value.trim();
-  try { localStorage.setItem("rb.name", n); } catch { /* ignore */ }
+  store.set("rb.name", n);
   return n;
 };
+
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+}
 
 function show(screen: "menu" | "lobby" | "game"): void {
   $("menu").classList.toggle("hidden", screen !== "menu");
   $("lobby").classList.toggle("hidden", screen !== "lobby");
   $("game").classList.toggle("hidden", screen !== "game");
-  if (screen === "game") { renderer.resize(); }
+  if (screen === "game") renderer.resize();
 }
 
 function toast(text: string, ms = 3200): void {
@@ -39,10 +48,66 @@ function toast(text: string, ms = 3200): void {
   setTimeout(() => el.remove(), ms);
 }
 
-// ---- menu --------------------------------------------------------------------------------------
-const botsEl = $<HTMLInputElement>("bots");
-botsEl.oninput = () => ($("bot-count").textContent = botsEl.value);
-$("solo").onclick = () => { $("menu-msg").textContent = ""; net.send({ t: "solo", name: myName(), bots: Number(botsEl.value) }); };
+// ---- game options (shared by the solo menu and the lobby host) ----------------------------------
+function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
+  root.innerHTML = `
+    <div class="opt"><label>Mode</label><select id="${prefix}-mode">
+      <option value="ffa">Free for all</option><option value="team">Teams</option>
+      <option value="ww">World War (cold war + research)</option><option value="wow">War of the Worlds (+ space race)</option></select></div>
+    <div class="opt" id="${prefix}-teams-row"><label>Teams: <b id="${prefix}-teams-n">2</b></label><input id="${prefix}-teams" type="range" min="2" max="6" value="2"></div>
+    <div class="opt"><label>Map size</label><select id="${prefix}-size">
+      <option value="small">Small (192×112)</option><option value="medium">Medium (320×192)</option>
+      <option value="large">Large (512×320)</option><option value="huge">Huge (1024×640)</option></select></div>
+    <div class="opt check"><input id="${prefix}-islands" type="checkbox"><label for="${prefix}-islands">Islands (needs ports and boats)</label></div>
+    <div class="opt"><label>Rival nations: <b id="${prefix}-bots-n">10</b></label><input id="${prefix}-bots" type="range" min="0" max="20" value="10"></div>
+    <div class="opt"><label>Custom map code (from the map editor)</label><input id="${prefix}-map" maxlength="10" placeholder="optional" autocapitalize="characters"></div>`;
+  const g = <T extends HTMLElement>(s: string) => root.querySelector<T>("#" + prefix + "-" + s)!;
+  const sync = () => {
+    g("teams-row").classList.toggle("hidden", g<HTMLSelectElement>("mode").value !== "team");
+    g("teams-n").textContent = g<HTMLInputElement>("teams").value;
+    g("bots-n").textContent = g<HTMLInputElement>("bots").value;
+    const max = { small: 20, medium: 30, large: 40, huge: 60 }[g<HTMLSelectElement>("size").value as "small"];
+    g<HTMLInputElement>("bots").max = String(max);
+  };
+  root.addEventListener("input", sync);
+  root.addEventListener("change", sync);
+  sync();
+  return () => ({
+    mode: g<HTMLSelectElement>("mode").value as GameSetup["mode"],
+    teams: Number(g<HTMLInputElement>("teams").value),
+    bots: Number(g<HTMLInputElement>("bots").value),
+    size: g<HTMLSelectElement>("size").value as GameSetup["size"],
+    islands: g<HTMLInputElement>("islands").checked,
+    map: g<HTMLInputElement>("map").value.trim().toUpperCase(),
+  });
+}
+const menuSetup = mountOptions($("menu-opts"), "mo");
+const lobbySetup = mountOptions($("lobby-opts"), "lo");
+
+// ---- country image ------------------------------------------------------------------------------
+let skinData = store.get("rb.skin");
+$("skin").addEventListener("change", (e) => {
+  const f = (e.target as HTMLInputElement).files?.[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const cx = c.getContext("2d")!;
+    const s = Math.min(img.width, img.height);
+    cx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 64, 64);
+    skinData = c.toDataURL("image/jpeg", 0.7);
+    store.set("rb.skin", skinData);
+    URL.revokeObjectURL(url);
+    net.send({ t: "skin", data: skinData });
+    toast("Country image set");
+  };
+  img.src = url;
+});
+
+// ---- menu ----------------------------------------------------------------------------------------
+$("solo").onclick = () => { $("menu-msg").textContent = ""; net.send({ t: "solo", name: myName(), setup: menuSetup() }); };
 $("create").onclick = () => { $("menu-msg").textContent = ""; net.send({ t: "create", name: myName() }); };
 $("join").onclick = () => {
   const code = $<HTMLInputElement>("code").value.trim();
@@ -51,10 +116,8 @@ $("join").onclick = () => {
 };
 $("code").addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") $("join").click(); });
 
-// ---- lobby -------------------------------------------------------------------------------------
-const lobbyBots = $<HTMLInputElement>("lobby-bots");
-lobbyBots.oninput = () => ($("lobby-bot-count").textContent = lobbyBots.value);
-$("start").onclick = () => net.send({ t: "start", bots: Number(lobbyBots.value) });
+// ---- lobby ---------------------------------------------------------------------------------------
+$("start").onclick = () => net.send({ t: "start", setup: lobbySetup() });
 function leave(): void {
   net.send({ t: "leave" });
   saveSession(null);
@@ -73,29 +136,53 @@ $("quit").onclick = () => {
 };
 $("over-ok").onclick = () => { $("over").classList.add("hidden"); leave(); };
 
-// ---- game UI -----------------------------------------------------------------------------------
+// ---- game UI -------------------------------------------------------------------------------------
 const canvas = $<HTMLCanvasElement>("c");
 const renderer = new Renderer(canvas);
-const ov: Overlay = { lasso: [], ghosts: [], hover: null, buildType: null, ringAt: null, selTank: 0, wallDraft: false };
+const ov: Overlay = { lasso: [], ghosts: [], hover: null, buildType: null, ringAt: null, selTank: 0, wallDraft: false, missileAim: false };
 
 const ratioEl = $<HTMLInputElement>("ratio");
 ratioEl.oninput = () => ($("ratio-val").textContent = ratioEl.value + "%");
 $("draw").onclick = () => { drawMode = !drawMode; $("draw").classList.toggle("on", drawMode); };
 $("home").onclick = () => { const p = game?.players.get(game.you); if (p && game) renderer.centerOn(p.cap, 7); };
+$("pause").onclick = () => net.send({ t: "pause" });
 $("ready").onclick = () => { net.send({ t: "ready" }); $("ready").textContent = "Waiting…"; };
+$("cancel").onclick = () => { for (const a of game?.attacks ?? []) if (a.by === game!.you) net.send({ t: "cancel", id: a.id }); };
+$("btn-save").onclick = () => net.send({ t: "save" });
+$("btn-dip").onclick = () => togglePanel("dip");
+$("btn-res").onclick = () => togglePanel("res");
+$("panel-close").onclick = () => togglePanel("");
 $("wall").onclick = () => {
-  ov.wallDraft = !ov.wallDraft;
+  clearTools();
+  ov.wallDraft = true;
+  $("wall").classList.add("on");
+  toast("Draw a line on your own land to build a wall");
+};
+$("missile").onclick = () => {
+  const on = !ov.missileAim;
+  clearTools();
+  ov.missileAim = on;
+  $("missile").classList.toggle("on", on);
+  if (on) toast("Tap the target for your missile");
+};
+let launchArmed = 0;
+$("launch").onclick = () => {
+  if (launchArmed && Date.now() - launchArmed < 3000) { launchArmed = 0; net.send({ t: "launch" }); return; }
+  launchArmed = Date.now();
+  toast("Tap again to launch your team to the planets");
+};
+
+function clearTools(): void {
+  ov.wallDraft = false;
+  ov.missileAim = false;
   ov.selTank = 0;
   buildType = null;
-  $("wall").classList.toggle("on", ov.wallDraft);
-  if (ov.wallDraft) toast("Draw a line on your own land to build a wall");
-};
-$("train").onclick = () => net.send({ t: "train", kind: "t" });
-$("train-f").onclick = () => net.send({ t: "train", kind: "f" });
-$("train-b").onclick = () => net.send({ t: "train", kind: "b" });
-$("pause").onclick = () => net.send({ t: "pause" });
-$("cancel").onclick = () => { for (const a of game?.attacks ?? []) if (a.by === game!.you) net.send({ t: "cancel", id: a.id }); };
+  $("wall").classList.remove("on");
+  $("missile").classList.remove("on");
+  refreshBuilds();
+}
 
+// build buttons
 const buildsEl = $("builds");
 const buildBtns = new Map<StructType, HTMLButtonElement>();
 for (const type of STRUCT_TYPES) {
@@ -103,10 +190,9 @@ for (const type of STRUCT_TYPES) {
   b.innerHTML = `${CFG.structures[type].label}<small></small>`;
   b.title = CFG.structures[type].desc;
   b.onclick = () => {
-    buildType = buildType === type ? null : type;
-    ov.wallDraft = false;
-    $("wall").classList.remove("on");
-    ov.selTank = 0;
+    const was = buildType === type;
+    clearTools();
+    buildType = was ? null : type;
     refreshBuilds();
     if (buildType) toast(`${CFG.structures[type].label}: ${CFG.structures[type].desc}. Tap your land to place.`);
   };
@@ -115,8 +201,15 @@ for (const type of STRUCT_TYPES) {
   buildBtns.set(type, b);
   buildsEl.appendChild(b);
 }
+function structAvailable(type: StructType): boolean {
+  if (!game) return true;
+  if (type === "lab") return game.research;
+  if (type === "spaceport") return game.mode === "wow" && (game.phase === "space" || game.planet !== "");
+  return true;
+}
 function refreshBuilds(): void {
   for (const [type, b] of buildBtns) {
+    b.classList.toggle("hidden", !structAvailable(type));
     b.classList.toggle("on", buildType === type);
     const cost = game?.structCost(type) ?? 0;
     setText(b.querySelector("small") as HTMLElement, `${fmt(cost)} gold`);
@@ -124,37 +217,74 @@ function refreshBuilds(): void {
   }
 }
 
-const input = new Input(canvas, renderer, {
-  drawMode: () => drawMode,
-  onLasso(poly, pressure) {
-    if (!game || !game.me().alive) return;
-    const rounded = poly.map((n) => Math.round(n * 100) / 100);
-    if (ov.wallDraft) { net.send({ t: "wall", pts: rounded }); ov.wallDraft = false; $("wall").classList.remove("on"); return; }
-    if (ov.selTank) { net.send({ t: "move", id: ov.selTank, pts: rounded }); return; }
-    if (poly.length < 6) return; // an attack area needs at least 3 points
-    let ratio = Number(ratioEl.value) / 100;
-    if (pressure !== null) ratio = Math.min(1, ratio * Math.max(0.3, Math.min(1.6, 0.4 + 1.2 * pressure)));
-    net.send({ t: "attack", poly: poly.map((n) => Math.round(n * 100) / 100), ratio });
-    ov.ghosts.push({ pts: poly, born: performance.now() });
-    if (ov.ghosts.length > 6) ov.ghosts.shift();
-  },
-  onTap(wx, wy) {
-    if (!game) return;
-    if (game.sp > 0) { net.send({ t: "spawn", x: Math.floor(wx), y: Math.floor(wy) }); return; }
-    // tanks: tap one of yours to select, tap elsewhere to send it there
-    const near = game.units.find((u) => u.owner === game!.you && Math.hypot(u.x - wx, u.y - wy) * renderer.cam.zoom < 22);
-    if (near) { ov.selTank = ov.selTank === near.id ? 0 : near.id; if (ov.selTank) toast("Tank selected: draw its route, or tap a spot"); return; }
-    if (ov.selTank && !buildType) { net.send({ t: "move", id: ov.selTank, pts: [wx, wy] }); return; }
-    if (!buildType && openAttackMenu(wx, wy)) return;
-    closeAttackMenu();
-    if (!buildType) return;
-    net.send({ t: "build", type: buildType, x: Math.floor(wx), y: Math.floor(wy) });
-    buildType = null;
-    refreshBuilds();
-  },
-});
+// unit buttons
+const UNITS: { k: UnitK; label: string; cost: number; need: StructType }[] = [
+  { k: "t", label: "Tank", cost: CFG.tankCost, need: "tankfactory" },
+  { k: "f", label: "Fighter", cost: CFG.fighterCost, need: "airbase" },
+  { k: "b", label: "Bomber", cost: CFG.bomberCost, need: "airbase" },
+  { k: "x", label: "Transport", cost: CFG.transportCost, need: "port" },
+  { k: "w", label: "Warship", cost: CFG.warshipCost, need: "port" },
+];
+const trainBtns: HTMLButtonElement[] = [];
+for (const u of UNITS) {
+  const b = document.createElement("button");
+  b.className = "hidden";
+  b.textContent = `${u.label} · ${fmt(u.cost)}`;
+  b.title = `Train a ${u.label.toLowerCase()}`;
+  b.onclick = () => net.send({ t: "train", kind: u.k });
+  $("trains").appendChild(b);
+  trainBtns.push(b);
+}
 
-// ---- attack marker menu: reinforce or retreat ----
+// panels
+function togglePanel(which: "" | "dip" | "res"): void {
+  panel = panel === which ? "" : which;
+  $("panel").classList.toggle("hidden", !panel);
+  renderPanel(true);
+}
+let panelHtml = "";
+function renderPanel(force = false): void {
+  if (!panel || !game) return;
+  let html = "";
+  if (panel === "dip") {
+    $("panel-title").textContent = game.mode === "team" ? "Teams" : "Diplomacy";
+    for (const [id, p] of game.players) {
+      if (id === game.you || !game.stats.get(id)?.alive) continue;
+      const me = game.me_;
+      let action = "";
+      if (game.mode === "team") action = p.team === game.players.get(game.you)?.team ? "<small>your team</small>" : "";
+      else if (me.allies.includes(id)) action = `<button data-unally="${id}">Break</button>`;
+      else if (me.reqs.includes(id)) action = `<button data-ally="${id}">Accept</button>`;
+      else action = `<button data-ally="${id}">Ally</button>`;
+      html += `<div class="prow"><div><i style="background:#${p.color.toString(16).padStart(6, "0")}"></i>${esc(p.name)}${p.team ? ` · team ${p.team}` : ""}<small>${fmt(game.stats.get(id)!.troops)} troops</small></div>${action}</div>`;
+    }
+  } else {
+    $("panel-title").textContent = `Research · ${game.me_.rp} points`;
+    let branch = "";
+    for (const id of TECH_IDS) {
+      const t = TECH[id];
+      if (t.branch === "Space" && game.mode !== "wow") continue;
+      if (t.branch !== branch) { branch = t.branch; html += `<div class="branch">${branch}</div>`; }
+      const done = game.me_.tech.includes(id);
+      const locked = !!t.req && !game.me_.tech.includes(t.req);
+      const can = !done && !locked && game.me_.rp >= t.cost && game.phase !== "expand";
+      html += `<div class="prow"><div>${t.label}<small>${t.desc}${locked ? ` · needs ${TECH[t.req as keyof typeof TECH].label}` : ""}</small></div>${done ? "<small>✓</small>" : `<button data-res="${id}" ${can ? "" : "disabled"}>${t.cost}</button>`}</div>`;
+    }
+    if (game.phase === "expand") html = `<p class="tag">Research opens when the great powers stand off (Cold War).</p>` + html;
+  }
+  if (!force && html === panelHtml) return;
+  panelHtml = html;
+  $("panel-body").innerHTML = html;
+  for (const b of $("panel-body").querySelectorAll<HTMLButtonElement>("button")) {
+    b.onclick = () => {
+      if (b.dataset.ally) net.send({ t: "ally", with: Number(b.dataset.ally) });
+      if (b.dataset.unally) net.send({ t: "unally", with: Number(b.dataset.unally) });
+      if (b.dataset.res) net.send({ t: "research", id: b.dataset.res });
+    };
+  }
+}
+
+// attack marker menu: reinforce or retreat
 let menuAttack = 0;
 function closeAttackMenu(): void { menuAttack = 0; $("attack-menu").classList.add("hidden"); }
 function openAttackMenu(wx: number, wy: number): boolean {
@@ -183,6 +313,43 @@ for (const b of document.querySelectorAll<HTMLButtonElement>("#attack-menu [data
 $("am-retreat").onclick = () => { net.send({ t: "cancel", id: menuAttack }); closeAttackMenu(); };
 $("am-close").onclick = closeAttackMenu;
 
+const input = new Input(canvas, renderer, {
+  drawMode: () => drawMode,
+  onLasso(poly, pressure) {
+    if (!game || !game.me().alive) return;
+    const rounded = poly.map((n) => Math.round(n * 100) / 100);
+    if (ov.wallDraft) { net.send({ t: "wall", pts: rounded }); clearTools(); return; }
+    if (ov.selTank) { net.send({ t: "move", id: ov.selTank, pts: rounded, ratio: Number(ratioEl.value) / 100 }); return; }
+    if (poly.length < 6) return; // an attack area needs at least 3 points
+    let ratio = Number(ratioEl.value) / 100;
+    if (pressure !== null) ratio = Math.min(1, ratio * Math.max(0.3, Math.min(1.6, 0.4 + 1.2 * pressure)));
+    net.send({ t: "attack", poly: rounded, ratio });
+    ov.ghosts.push({ pts: poly, born: performance.now() });
+    if (ov.ghosts.length > 6) ov.ghosts.shift();
+  },
+  onTap(wx, wy) {
+    if (!game) return;
+    if (game.sp > 0) { net.send({ t: "spawn", x: Math.floor(wx), y: Math.floor(wy) }); return; }
+    if (ov.missileAim) { net.send({ t: "missile", x: wx, y: wy }); clearTools(); return; }
+    // units: tap one of yours to select, tap elsewhere to send it there
+    const near = game.units.find((u) => u.owner === game!.you && Math.hypot(u.x - wx, u.y - wy) * renderer.cam.zoom < 22);
+    if (near) {
+      const id = ov.selTank === near.id ? 0 : near.id;
+      clearTools();
+      ov.selTank = id;
+      if (id) toast(near.k === "x" ? "Transport selected: tap a coast to land troops (slider sets how many)" : "Unit selected: draw its route, or tap a spot");
+      return;
+    }
+    if (ov.selTank && !buildType) { net.send({ t: "move", id: ov.selTank, pts: [wx, wy], ratio: Number(ratioEl.value) / 100 }); return; }
+    if (!buildType && openAttackMenu(wx, wy)) return;
+    closeAttackMenu();
+    if (!buildType) return;
+    net.send({ t: "build", type: buildType, x: Math.floor(wx), y: Math.floor(wy) });
+    buildType = null;
+    refreshBuilds();
+  },
+});
+
 window.addEventListener("resize", () => { if (game) { renderer.resize(); forceDraw = true; } });
 
 const lastText = new WeakMap<HTMLElement, string>();
@@ -192,6 +359,15 @@ function setText(el: HTMLElement, s: string): void {
 const lastHtml = new WeakMap<HTMLElement, string>();
 function setHtml(el: HTMLElement, s: string): void {
   if (lastHtml.get(el) !== s) { lastHtml.set(el, s); el.innerHTML = s; }
+}
+
+function phaseText(g: ClientGame): string {
+  if (g.planet) return `${g.planet} planet`;
+  if (!g.research) return "";
+  if (g.phase === "expand") return "Expansion";
+  if (g.phase === "cold") { const s = Math.ceil(g.pt / 10); return `Cold War ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+  if (g.phase === "space") return "Space Race";
+  return "War";
 }
 
 function hud(): void {
@@ -207,31 +383,28 @@ function hud(): void {
   }).join(""));
   const incoming = game.attacks.filter((a) => a.on === game!.you && a.by !== game!.you);
   setHtml($("alerts"), incoming.map((a) => `<div>⚠ ${esc(game!.players.get(a.by)?.name ?? "?")} is invading you${a.pool !== undefined ? ` (${fmt(a.pool)})` : ""}</div>`).join(""));
-  const hasFactory = game.structs.some((s) => s.owner === game!.you && s.type === "tankfactory");
-  $("train").classList.toggle("hidden", !hasFactory);
-  setText($("train"), `Tank · ${fmt(CFG.tankCost)}`);
-  const hasAirbase = game.structs.some((s) => s.owner === game!.you && s.type === "airbase");
-  $("train-f").classList.toggle("hidden", !hasAirbase);
-  $("train-b").classList.toggle("hidden", !hasAirbase);
-  setText($("train-f"), `Fighter · ${fmt(CFG.fighterCost)}`);
-  setText($("train-b"), `Bomber · ${fmt(CFG.bomberCost)}`);
-  if (ov.selTank && !game.units.some((u) => u.id === ov.selTank)) ov.selTank = 0;
   $("cancel").classList.toggle("hidden", !game.attacks.some((a) => a.by === game!.you));
   $("pause").classList.toggle("hidden", !isHost);
+  $("btn-save").classList.toggle("hidden", !isHost);
+  $("btn-res").classList.toggle("hidden", !game.research);
   setText($("pause"), game.paused ? "▶" : "⏸");
+  const pt = phaseText(game);
+  $("phase").classList.toggle("hidden", !pt);
+  setText($("phase-txt"), pt);
+  UNITS.forEach((u, i) => trainBtns[i].classList.toggle("hidden", !game!.has(u.need)));
+  $("missile").classList.toggle("hidden", !game.has("silo"));
+  $("launch").classList.toggle("hidden", !game.me_.canLaunch);
+  if (ov.selTank && !game.units.some((u) => u.id === ov.selTank)) ov.selTank = 0;
   const spawning = game.sp > 0;
   $("spawn-bar").classList.toggle("hidden", !spawning);
   $("bottom").classList.toggle("hidden", spawning);
   if (spawning) setText($("spawn-count"), Math.ceil(game.sp / 10) + "s");
   const banner = $("banner");
-  if (game.paused) { setText(banner, "Paused"); banner.classList.remove("hidden"); }
-  else if (!me.alive && !game.over) { setText(banner, "You were eliminated — spectating"); banner.classList.remove("hidden"); }
+  if (game.paused) { setText(banner, isHost ? "Paused — press ▶ to resume" : "Paused by the host"); banner.classList.remove("hidden"); }
+  else if (!me.alive && !game.over) { setText(banner, game.you ? "You were eliminated — spectating" : "Spectating"); banner.classList.remove("hidden"); }
   else banner.classList.add("hidden");
   refreshBuilds();
-}
-
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+  renderPanel();
 }
 
 function frame(now: number): void {
@@ -252,12 +425,13 @@ function frame(now: number): void {
     const p = game.players.get(game.you);
     if (p) ov.ringAt = { x: p.cap % game.w, y: Math.floor(p.cap / game.w), r: CFG.structures[hoverBuildBtn].range };
   }
+  if (ov.missileAim && h) ov.ringAt = { x: hx, y: hy, r: CFG.missileRadius };
   // only redraw when something visible changed (idle ~10 fps on each server tick; 30+ fps while animating)
   const cam = renderer.cam;
   const sig = `${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.zoom.toFixed(3)},${renderer.cw},${renderer.ch}`;
   const ring = ov.ringAt ? `${ov.ringAt.x},${ov.ringAt.y},${ov.ringAt.r}` : "";
-  const animating = input.lasso.length > 0 || ov.ghosts.length > 0 || game.attacks.length > 0;
-  const changed = sig !== lastSig || game.tick !== lastTick || ring !== lastRing || game.dirty.length > 0 || forceDraw;
+  const animating = input.lasso.length > 0 || ov.ghosts.length > 0 || game.attacks.length > 0 || game.missiles.length > 0;
+  const changed = sig !== lastSig || game.tick !== lastTick || ring !== lastRing || game.dirty.length > 0 || game.skinChanged.length > 0 || forceDraw;
   if (changed || (animating && now - lastDraw > 33)) {
     lastSig = sig; lastTick = game.tick; lastRing = ring; lastDraw = now; forceDraw = false;
     renderer.draw(now, ov);
@@ -267,7 +441,7 @@ let lastSig = "", lastRing = "", lastTick = -1, lastDraw = 0, forceDraw = true;
 requestAnimationFrame(frame);
 setInterval(hud, 250);
 
-// ---- network -----------------------------------------------------------------------------------
+// ---- network -------------------------------------------------------------------------------------
 net.onstatus = (online) => $("offline").classList.toggle("hidden", online || !started);
 net.onreconnect = () => { const s = loadSession(); if (s) net.send({ t: "rejoin", code: s.code, token: s.token }); };
 net.onmsg = (m: ServerMsg) => {
@@ -275,6 +449,7 @@ net.onmsg = (m: ServerMsg) => {
     case "joined":
       isHost = m.host;
       saveSession({ code: m.code, token: m.token });
+      if (skinData) net.send({ t: "skin", data: skinData });
       break;
     case "lobby":
       isHost = m.host;
@@ -293,8 +468,11 @@ net.onmsg = (m: ServerMsg) => {
       const me = game.players.get(game.you);
       if (me && game.sp === 0) renderer.centerOn(me.cap, Math.max(renderer.cam.zoom, window.innerWidth < 700 ? 6 : 9));
       $("over").classList.add("hidden");
-      buildType = null;
-      show("game");
+      $("ready").textContent = "Ready";
+      clearTools();
+      panel = "";
+      $("panel").classList.add("hidden");
+      forceDraw = true;
       hud();
       break;
     }
@@ -311,20 +489,23 @@ net.onmsg = (m: ServerMsg) => {
     case "paused":
       if (game) game.paused = m.paused;
       break;
+    case "saved":
+      toast("Game saved. Rejoin it later with the lobby code.");
+      break;
     case "over":
       if (game) {
         game.over = true;
         game.winner = m.winner;
         const w = game.players.get(m.winner);
-        $("over-title").textContent = m.winner === game.you ? "Victory! 🏆" : w ? `${w.name} wins` : "Game over";
+        const mine = m.winner === game.you || game.friendly(m.winner);
+        $("over-title").textContent = mine ? "Victory! 🏆" : w ? `${w.name}${m.team ? "'s team" : ""} wins` : "Game over";
         $("over").classList.remove("hidden");
         saveSession(null);
       }
       break;
     case "error":
       if (m.msg === "session expired") { saveSession(null); show("menu"); started = false; break; }
-      if (m.msg !== lastToast || true) toast(m.msg);
-      lastToast = m.msg;
+      toast(m.msg);
       $("menu-msg").textContent = $("menu").classList.contains("hidden") ? "" : m.msg;
       $("lobby-msg").textContent = $("lobby").classList.contains("hidden") ? "" : m.msg;
       break;

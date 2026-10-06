@@ -1,7 +1,9 @@
 import { CFG, StructType } from "../core/config";
-import { generateMap, Terrain } from "../core/mapgen";
+import { Terrain } from "../core/mapgen";
 import { unrle } from "../core/protocol";
-import type { AttackInfo, PlayerInfo, PlayerStat, ServerMsg, StructInfo, UnitInfo } from "../core/protocol";
+import type {
+  AttackInfo, MeInfo, MissileInfo, PlayerInfo, PlayerStat, ServerMsg, StructInfo, UnitInfo,
+} from "../core/protocol";
 
 export interface Stat { troops: number; gold: number; tiles: number; alive: boolean }
 
@@ -9,6 +11,12 @@ export class ClientGame {
   w: number;
   h: number;
   you: number;
+  mode: string;
+  teams: number;
+  planet: string;
+  phase: string;
+  /** phase countdown (cold war), ticks */
+  pt = 0;
   terrain: Uint8Array;
   owner: Uint16Array;
   players = new Map<number, PlayerInfo>();
@@ -16,25 +24,37 @@ export class ClientGame {
   attacks: AttackInfo[] = [];
   structs: StructInfo[] = [];
   units: UnitInfo[] = [];
+  missiles: MissileInfo[] = [];
   walls = new Map<number, number>();
+  skins = new Map<number, Uint8ClampedArray>();
+  me_: MeInfo = { rp: 0, tech: [], allies: [], reqs: [], canLaunch: false };
   paused = false;
   over = false;
   winner = 0;
+  winnerTeam = 0;
   tick = 0;
   /** spawn-phase ticks remaining */
   sp = 0;
   /** tiles changed since the renderer last repainted */
   dirty: number[] = [];
   landTiles = 0;
+  /** set when a skin finishes decoding so the renderer repaints that nation */
+  skinChanged: number[] = [];
 
   constructor(m: Extract<ServerMsg, { t: "start" }>) {
     this.w = m.w;
     this.h = m.h;
     this.you = m.you;
-    this.terrain = generateMap(m.seed, m.w, m.h);
+    this.mode = m.mode;
+    this.teams = m.teams;
+    this.planet = m.planet;
+    this.phase = m.phase;
+    this.pt = m.pt;
+    this.terrain = new Uint8Array(m.w * m.h);
+    unrle(m.terrain, this.terrain);
     this.owner = new Uint16Array(m.w * m.h);
     unrle(m.owners, this.owner);
-    for (const p of m.players) this.players.set(p.id, p);
+    for (const p of m.players) { this.players.set(p.id, p); if (p.skin) this.loadSkin(p.id, p.skin); }
     this.structs = m.structs;
     this.units = m.units;
     for (const [t, hp] of m.walls) this.walls.set(t, hp);
@@ -50,6 +70,21 @@ export class ClientGame {
     for (let i = 0; i < this.owner.length; i++) this.dirty.push(i);
   }
 
+  /** Decode a data-URL image into a small RGBA tile that is repeated across the nation's land. */
+  loadSkin(id: number, data: string): void {
+    if (!data) { this.skins.delete(id); this.skinChanged.push(id); return; }
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 64;
+      const cx = c.getContext("2d")!;
+      cx.drawImage(img, 0, 0, 64, 64);
+      this.skins.set(id, cx.getImageData(0, 0, 64, 64).data);
+      this.skinChanged.push(id);
+    };
+    img.src = data;
+  }
+
   applyTick(m: Extract<ServerMsg, { t: "tick" }>): string[] {
     this.tick = m.n;
     for (let i = 0; i < m.d.length; i += 2) {
@@ -62,6 +97,11 @@ export class ClientGame {
     }
     this.attacks = m.a;
     this.units = m.u;
+    this.missiles = m.ms;
+    this.phase = m.ph;
+    this.pt = m.pt;
+    this.me_ = m.me;
+    if (m.sk) for (const [id, data] of m.sk) { const p = this.players.get(id); if (p) p.skin = data; this.loadSkin(id, data); }
     if (m.w) for (const [t, hp] of m.w) { if (hp > 0) this.walls.set(t, hp); else this.walls.delete(t); this.dirty.push(t); }
     this.sp = m.sp;
     if (m.caps) for (const [id, cap] of m.caps) { const p = this.players.get(id); if (p) p.cap = cap; }
@@ -79,7 +119,17 @@ export class ClientGame {
     return Math.round(CFG.structures[type].cost * Math.pow(CFG.structCostGrowth, n));
   }
 
-  hasRadar(): boolean {
-    return this.structs.some((s) => s.owner === this.you && s.type === "radar");
+  has(type: StructType): boolean {
+    return this.structs.some((s) => s.owner === this.you && s.type === type);
+  }
+
+  get research(): boolean {
+    return this.mode === "ww" || this.mode === "wow";
+  }
+
+  friendly(id: number): boolean {
+    if (id === this.you) return true;
+    const a = this.players.get(this.you), b = this.players.get(id);
+    return !!a && !!b && ((a.team !== 0 && a.team === b.team) || this.me_.allies.includes(id));
   }
 }

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b1a2b">
+<title>Map editor · Republic Battles</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<style>
+  body { overflow: auto; }
+  #ed { display: grid; gap: 10px; padding: calc(var(--safe-t) + 10px) 12px calc(var(--safe-b) + 12px); max-width: 1100px; margin: 0 auto; }
+  #ed canvas { width: 100%; background: #16395c; border-radius: 12px; touch-action: none; image-rendering: pixelated; display: block; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .bar select, .bar input[type=text] { background: rgba(255,255,255,0.08); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 15px; }
+  .bar input[type=range] { width: 140px; }
+  .swatch { width: 18px; height: 18px; border-radius: 4px; display: inline-block; vertical-align: middle; margin-right: 6px; border: 1px solid #fff4; }
+  #result { font-size: 22px; font-weight: 800; letter-spacing: 0.15em; color: var(--accent); -webkit-user-select: text; user-select: text; }
+</style>
+</head>
+<body style="position:static; height:auto">
+<div id="ed">
+  <div class="bar"><a href="./">← Back</a><b>Map editor</b><span class="muted">Paint water, land and mountains. Pencil pressure changes brush size.</span></div>
+  <div class="bar">
+    <select id="size">
+      <option value="192x112">192 × 112</option><option value="256x160">256 × 160</option>
+      <option value="384x240">384 × 240</option><option value="512x320">512 × 320</option>
+    </select>
+    <button id="new">Blank</button>
+    <button id="rand">Random base</button>
+    <button id="undo">Undo</button>
+  </div>
+  <div class="bar">
+    <button id="b0" class="on"><span class="swatch" style="background:#1d4a73"></span>Water</button>
+    <button id="b1"><span class="swatch" style="background:#5c8a55"></span>Land</button>
+    <button id="b2"><span class="swatch" style="background:#8a877d"></span>Mountain</button>
+    <label>Brush <input id="rad" type="range" min="1" max="20" value="4"></label>
+  </div>
+  <canvas id="cv"></canvas>
+  <div class="bar">
+    <input id="name" type="text" maxlength="32" placeholder="Map name">
+    <button id="pub" class="primary">Publish</button>
+    <span id="result"></span><span id="msg" class="msg"></span>
+  </div>
+  <p class="muted">Publishing gives you a code. Enter it as <i>Custom map code</i> when you start a game or lobby. Land: <b id="land">0</b> tiles (need at least 400).</p>
+</div>
+<script type="module" src="editor.js"></script>
+</body>
+</html>

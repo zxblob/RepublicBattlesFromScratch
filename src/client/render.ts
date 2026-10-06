@@ -22,6 +22,7 @@ export interface Overlay {
   ringAt: { x: number; y: number; r: number } | null;
   selTank: number;
   wallDraft: boolean;
+  missileAim: boolean;
 }
 
 export class Renderer {
@@ -105,6 +106,11 @@ export class Renderer {
     else if (y > 0 && g.owner[i - g.w] !== o) edge = true;
     else if (y < g.h - 1 && g.owner[i + g.w] !== o) edge = true;
     if (edge) return mix(p.color, 0xffffff, 0.15);
+    const skin = g.skins.get(o);
+    if (skin) {
+      const k = ((y & 63) * 64 + (x & 63)) * 4;
+      return mix(mix(base, p.color, 0.3), (skin[k] << 16) | (skin[k + 1] << 8) | skin[k + 2], 0.7);
+    }
     return mix(base, p.color, 0.55);
   }
 
@@ -115,6 +121,11 @@ export class Renderer {
 
   private flushDirty(): void {
     const g = this.g;
+    if (g.skinChanged.length) {
+      const ids = new Set(g.skinChanged);
+      g.skinChanged = [];
+      for (let i = 0; i < g.owner.length; i++) if (ids.has(g.owner[i])) g.dirty.push(i);
+    }
     if (!g.dirty.length) return;
     if (g.dirty.length > g.owner.length / 4) {
       // full repaint (game start): every tile exactly once
@@ -211,6 +222,16 @@ export class Renderer {
       if (u.k === "t") {
         ctx.fillRect(u.x - r, u.y - r * 0.7, r * 2, r * 1.4);
         ctx.strokeRect(u.x - r, u.y - r * 0.7, r * 2, r * 1.4);
+      } else if (u.k === "x" || u.k === "w") {
+        const w = u.k === "w" ? r * 1.5 : r * 1.2;
+        ctx.beginPath();
+        ctx.moveTo(u.x - w, u.y - r * 0.45);
+        ctx.lineTo(u.x + w, u.y - r * 0.45);
+        ctx.lineTo(u.x + w * 0.6, u.y + r * 0.6);
+        ctx.lineTo(u.x - w * 0.6, u.y + r * 0.6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
       } else {
         // aircraft: bigger arrow shapes so they stay readable when zoomed out; bombers are wider
         const rr = r * 1.25, wide = u.k === "b" ? 1.1 : 0.7;
@@ -225,7 +246,27 @@ export class Renderer {
       }
       ctx.fillStyle = "#fff";
       ctx.font = `bold ${r * 0.95}px sans-serif`;
-      ctx.fillText(u.k === "t" ? "T" : u.k === "f" ? "F" : String(u.ammo), u.x, u.y + (u.k === "t" ? 0.05 : r * 0.25));
+      const glyph = u.k === "t" ? "T" : u.k === "f" ? "F" : u.k === "w" ? "W" : u.k === "x" ? (u.cargo ? fmt(u.cargo / CFG.displayScale) : "x") : String(u.ammo);
+      ctx.fillText(glyph, u.x, u.y + (u.k === "t" || u.k === "x" || u.k === "w" ? 0.05 : r * 0.25));
+    }
+
+    // missiles in flight
+    for (const m of g.missiles) {
+      const f = 1 - m.left / m.total;
+      const x = m.sx + (m.tx - m.sx) * f, y = m.sy + (m.ty - m.sy) * f;
+      ctx.setLineDash([3 / cam.zoom, 5 / cam.zoom]);
+      ctx.lineWidth = Math.max(0.08, 1.5 / cam.zoom);
+      ctx.strokeStyle = "rgba(255,120,80,0.7)";
+      ctx.beginPath(); ctx.moveTo(m.sx, m.sy); ctx.lineTo(m.tx, m.ty); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(x, y, Math.max(0.7, 5 / cam.zoom), 0, Math.PI * 2);
+      ctx.fillStyle = "#ff6b3d";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(m.tx, m.ty, CFG.missileRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255,80,60,0.45)";
+      ctx.stroke();
     }
 
     // range ring

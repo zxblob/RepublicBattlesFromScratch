@@ -3,6 +3,7 @@ import { rasterizePolygon } from "./geometry";
 import { generateMap, Terrain } from "./mapgen";
 import { mulberry32, Rng } from "./rng";
 import { botThink } from "./bots";
+import { rle, unrle } from "./protocol";
 
 export interface Player {
   id: number;
@@ -108,6 +109,20 @@ export function hslToRgb(h: number, s: number, l: number): number {
   return (Math.round(f(0) * 255) << 16) | (Math.round(f(8) * 255) << 8) | Math.round(f(4) * 255);
 }
 
+export interface GameSnapshot {
+  v: number;
+  seed: number; w: number; h: number; mode: GameMode; teams: number; planet: string;
+  terrain: number[]; owner: number[]; wall: number[];
+  players: Player[]; structures: Structure[];
+  attacks: (Omit<Attack, "tiles"> & { tiles: number[] })[];
+  units: Unit[]; missiles: Missile[];
+  tickNo: number; spawnTicks: number; phase: Phase; phaseTicks: number; hold: number;
+  over: boolean; winner: number; winnerTeam: number;
+  allyReq: [number, number[]][];
+  rng: number;
+  ids: [number, number, number, number];
+}
+
 export class Game {
   readonly w: number;
   readonly h: number;
@@ -125,7 +140,7 @@ export class Game {
   readonly rng: Rng;
   readonly landTiles: number;
   readonly mode: GameMode;
-  readonly teams: number;
+  teams: number;
   readonly planet: string;
   readonly research: boolean;
   /** pending alliance proposals: target -> proposers */
@@ -145,13 +160,14 @@ export class Game {
   /** tile indices whose owner changed since the server last drained them */
   dirty: number[] = [];
   structDirty = false;
+  skinDirty: number[] = [];
   wallDirty: number[] = [];
   events: GameEvent[] = [];
 
-  private nextAttackId = 1;
-  private nextStructId = 1;
-  private nextUnitId = 1;
-  private nextMissileId = 1;
+  nextAttackId = 1;
+  nextStructId = 1;
+  nextUnitId = 1;
+  nextMissileId = 1;
 
   constructor(seed: number, w = 192, h = 112, opts: GameOptions = {}) {
     this.seed = seed;
@@ -161,7 +177,7 @@ export class Game {
     this.teams = this.mode === "team" ? Math.max(2, Math.min(6, opts.teams ?? 2)) : 0;
     this.planet = opts.planet ?? "";
     this.research = this.mode === "ww" || this.mode === "wow";
-    this.phase = this.research ? "expand" : "play";
+    this.phase = this.planet ? "war" : this.research ? "expand" : "play";
     this.rng = mulberry32(seed ^ 0xabcdef);
     this.terrain = opts.terrain ?? generateMap(seed, w, h, opts.islands ? 0.4 : this.planet === "volcanic" ? 0.55 : 0.5, !!opts.islands);
     this.owner = new Uint16Array(w * h);
@@ -1001,10 +1017,10 @@ export class Game {
     if (this.phase === "cold") return;
     const byGroup = new Map<number, number>();
     for (const p of alive) byGroup.set(this.groupOf(p.id), (byGroup.get(this.groupOf(p.id)) ?? 0) + p.tiles);
-    const limit = this.mode === "wow" && this.phase === "war" ? 2 : 0.7; // wow: space race triggers first
-    if (limit === 0.7) {
+    const limit = this.mode === "wow" && this.phase === "war" && !this.planet ? 2 : this.planet ? 0.6 : 0.7; // wow: the space race triggers first
+    if (limit < 1) {
       for (const [g, tiles] of byGroup) {
-        if (tiles >= this.landTiles * 0.7) {
+        if (tiles >= this.landTiles * limit) {
           const top = alive.filter((x) => this.groupOf(x.id) === g).reduce((m, x) => (x.tiles > m.tiles ? x : m));
           this.winnerTeam = top.team;
           return this.finish(top.id);
@@ -1044,7 +1060,7 @@ export class Game {
         this.phase = "war";
         this.events.push({ k: "text", text: "The Cold War is over. War resumes!" });
       }
-    } else if (this.phase === "war" && this.mode === "wow" && this.tickNo % 10 === 0) {
+    } else if (this.phase === "war" && this.mode === "wow" && !this.planet && this.tickNo % 10 === 0) {
       const byGroup = new Map<number, number>();
       for (const p of alive) byGroup.set(this.groupOf(p.id), (byGroup.get(this.groupOf(p.id)) ?? 0) + p.tiles);
       for (const tiles of byGroup.values()) {
@@ -1187,5 +1203,45 @@ export class Game {
       }
     }
     return queue;
+  }
+
+  // ---- snapshots (save games / restart-resume) ------------------------------------------------
+
+  exportState(): GameSnapshot {
+    return {
+      v: 1,
+      seed: this.seed, w: this.w, h: this.h, mode: this.mode, teams: this.teams, planet: this.planet,
+      terrain: rle(this.terrain), owner: rle(this.owner), wall: rle(this.wall),
+      players: this.players.slice(1),
+      structures: this.structures,
+      attacks: this.attacks.map((a) => ({ ...a, tiles: [...a.tiles] })),
+      units: this.units, missiles: this.missiles,
+      tickNo: this.tickNo, spawnTicks: this.spawnTicks, phase: this.phase, phaseTicks: this.phaseTicks, hold: this.hold,
+      over: this.over, winner: this.winner, winnerTeam: this.winnerTeam,
+      allyReq: [...this.allyReq.entries()],
+      rng: this.rng.getState(),
+      ids: [this.nextAttackId, this.nextStructId, this.nextUnitId, this.nextMissileId],
+    };
+  }
+
+  static restore(s: GameSnapshot): Game {
+    const terrain = new Uint8Array(s.w * s.h);
+    unrle(s.terrain, terrain);
+    const g = new Game(s.seed, s.w, s.h, { mode: s.mode, teams: s.teams, planet: s.planet, terrain });
+    (g as { teams: number }).teams = s.teams;
+    unrle(s.owner, g.owner);
+    unrle(s.wall, g.wall);
+    g.players.push(...s.players);
+    g.structures.push(...s.structures);
+    for (const st of g.structures) g.structAt.set(st.tile, st);
+    for (const a of s.attacks) g.attacks.push({ ...a, tiles: new Set(a.tiles) });
+    g.units.push(...s.units);
+    g.missiles.push(...s.missiles);
+    g.tickNo = s.tickNo; g.spawnTicks = s.spawnTicks; g.phase = s.phase; g.phaseTicks = s.phaseTicks; g.hold = s.hold;
+    g.over = s.over; g.winner = s.winner; g.winnerTeam = s.winnerTeam;
+    g.allyReq = new Map(s.allyReq);
+    g.rng.setState(s.rng);
+    [g.nextAttackId, g.nextStructId, g.nextUnitId, g.nextMissileId] = s.ids;
+    return g;
   }
 }

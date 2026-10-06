@@ -17,8 +17,9 @@
     <h1>Republic<br>Battles</h1>
     <p class="tag">Draw the border you want to take.</p>
     <label>Your name <input id="name" maxlength="16" autocomplete="nickname" placeholder="Commander"></label>
-    <label>Rival nations: <b id="bot-count">10</b>
-      <input id="bots" type="range" min="1" max="20" value="10"></label>
+    <label class="skin-row">Country image <span class="muted">(shown on your land, optional)</span>
+      <input id="skin" type="file" accept="image/*"></label>
+    <details id="menu-opts-wrap" open><summary>Game options</summary><div id="menu-opts"></div></details>
     <button id="solo" class="primary">Play solo</button>
     <div class="row">
       <button id="create">Create private lobby</button>
@@ -28,6 +29,7 @@
       <button id="join">Join</button>
     </div>
     <p id="menu-msg" class="msg"></p>
+    <p class="tag"><a href="editor.html">Map editor</a> · saved games resume with their lobby code</p>
   </div>
 </main>
 
@@ -38,8 +40,7 @@
     <p class="tag">Share this code with friends.</p>
     <ul id="members"></ul>
     <div id="host-controls">
-      <label>Rival nations: <b id="lobby-bot-count">6</b>
-        <input id="lobby-bots" type="range" min="0" max="20" value="6"></label>
+      <div id="lobby-opts"></div>
       <button id="start" class="primary">Start game</button>
     </div>
     <p id="wait" class="tag hidden">Waiting for the host to start…</p>
@@ -54,12 +55,17 @@
     <div class="stat"><span>Troops</span><b id="s-troops">0</b></div>
     <div class="stat"><span>Gold</span><b id="s-gold">0</b></div>
     <div class="stat"><span>Land</span><b id="s-land">0%</b></div>
+    <div id="phase" class="stat hidden"><span>Phase</span><b id="phase-txt"></b></div>
+    <button id="btn-dip" class="icon" title="Diplomacy">🤝</button>
+    <button id="btn-res" class="icon hidden" title="Research">🔬</button>
+    <button id="btn-save" class="icon hidden" title="Save game (host)">💾</button>
     <button id="pause" class="icon hidden" title="Pause (host)">⏸</button>
     <button id="quit" class="icon" title="Leave game">✕</button>
   </div>
   <ol id="board"></ol>
   <div id="alerts"></div>
   <div id="toast"></div>
+  <div id="panel" class="hidden"><div class="panel-head"><b id="panel-title"></b><button id="panel-close" class="icon">✕</button></div><div id="panel-body"></div></div>
   <div id="attack-menu" class="hidden">
     <b id="am-title">Attack</b>
     <div class="row"><button data-r="0.25">+25%</button><button data-r="0.5">+50%</button><button data-r="1">All in</button></div>
@@ -81,9 +87,9 @@
       <button id="draw" title="Draw mode: one-finger drag draws the attack area">✍ Draw</button>
       <div id="builds"></div>
       <button id="wall" title="Draw a wall line on your land">▬ Wall</button>
-      <button id="train" class="hidden" title="Train a tank at your factory">Tank</button>
-      <button id="train-f" class="hidden" title="Train a fighter at your airbase">Fighter</button>
-      <button id="train-b" class="hidden" title="Train a bomber at your airbase">Bomber</button>
+      <span id="trains"></span>
+      <button id="missile" class="hidden" title="Launch a missile: tap a target">🚀 Missile</button>
+      <button id="launch" class="hidden" title="Launch to the planets">🚀 Launch to space</button>
       <button id="cancel" class="hidden">Cancel attacks</button>
       <button id="home" title="Centre on capital">⌖</button>
     </div>
