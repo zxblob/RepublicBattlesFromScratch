@@ -1,5 +1,6 @@
 import { CFG, StructType } from "../core/config";
 import { Terrain } from "../core/mapgen";
+import { fmt } from "./format";
 import type { ClientGame } from "./state";
 
 export interface Camera { x: number; y: number; zoom: number }
@@ -234,7 +235,7 @@ export class Renderer {
       ctx.fill();
       ctx.fillStyle = "#111";
       ctx.font = `bold ${Math.max(1.2, 9 / cam.zoom)}px sans-serif`;
-      ctx.fillText(String(a.pool ?? ""), a.x, a.y + 0.05);
+      ctx.fillText(a.pool === undefined ? "" : fmt(a.pool), a.x, a.y + 0.05);
     }
     ctx.restore();
 
@@ -255,7 +256,7 @@ export class Renderer {
       ctx.strokeText(p.name, sx, sy - size * 0.55);
       ctx.fillText(p.name, sx, sy - size * 0.55);
       ctx.font = `${size * 0.85}px system-ui, sans-serif`;
-      const t = String(Math.floor(st.troops));
+      const t = fmt(st.troops);
       ctx.strokeText(t, sx, sy + size * 0.5);
       ctx.fillText(t, sx, sy + size * 0.5);
     }

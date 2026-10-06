@@ -227,7 +227,7 @@ export class Game {
       const d = this.players[o];
       const density = Math.max(d.troops / Math.max(d.tiles, 1), CFG.minDensity);
       const small = 1 + CFG.smallBonusMax * Math.max(0, Math.min(1, (CFG.smallTiles - d.tiles) / CFG.smallTiles));
-      cost = density * small * (t === Terrain.Mountain ? CFG.mountainMult : 1);
+      cost = density * small * CFG.playerCostMult * (t === Terrain.Mountain ? CFG.mountainMult : 1);
       if (d.capital >= 0) {
         const dx = (d.capital % this.w) - tx, dy = ((d.capital / this.w) | 0) - ty;
         if (dx * dx + dy * dy <= CFG.capitalRadius * CFG.capitalRadius) cost *= CFG.capitalMult;
@@ -326,7 +326,7 @@ export class Game {
     a.cy = sy / a.tiles.size + 0.5;
     let progress = false;
     if (frontier.length) {
-      const k = Math.max(1, Math.min(14, Math.ceil(frontier.length * 0.2)));
+      const k = Math.max(1, Math.min(CFG.maxTilesPerTick, Math.ceil(frontier.length * CFG.tilesPerTickShare)));
       for (let n = 0; n < k && frontier.length; n++) {
         const j = Math.floor(this.rng() * frontier.length);
         const tile = frontier[j];

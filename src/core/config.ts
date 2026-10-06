@@ -1,6 +1,8 @@
 /** All gameplay tunables live here so balance can change without touching logic. */
 export const CFG = {
   tickMs: 100,
+  /** UI-only multiplier so numbers read in thousands like the original game */
+  displayScale: 100,
 
   // economy
   startTroops: 120,
@@ -14,7 +16,11 @@ export const CFG = {
   bankGold: 0.15,
 
   // combat
-  neutralCost: 2,
+  neutralCost: 0.8,
+  /** multiplier on the cost of taking player-owned tiles (lower = troops capture more) */
+  playerCostMult: 0.65,
+  tilesPerTickShare: 0.3,
+  maxTilesPerTick: 24,
   mountainMult: 2.2,
   minDensity: 1,
   defenderLossShare: 0.6,

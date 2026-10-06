@@ -3,6 +3,7 @@ import type { ServerMsg } from "../core/protocol";
 import { Input } from "./input";
 import { loadSession, Net, saveSession } from "./net";
 import { Overlay, Renderer } from "./render";
+import { fmt } from "./format";
 import { ClientGame } from "./state";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -62,7 +63,14 @@ function leave(): void {
   show("menu");
 }
 $("lobby-leave").onclick = leave;
-$("quit").onclick = () => { if (confirm("Leave this game?")) leave(); };
+// two-tap confirm (window.confirm is blocked in embedded browsers and some mobile webviews)
+let quitArmed = 0;
+$("quit").onclick = () => {
+  if (quitArmed && Date.now() - quitArmed < 3000) { quitArmed = 0; $("quit").textContent = "✕"; leave(); return; }
+  quitArmed = Date.now();
+  $("quit").textContent = "Leave?";
+  setTimeout(() => { if (quitArmed && Date.now() - quitArmed >= 3000) { quitArmed = 0; $("quit").textContent = "✕"; } }, 3100);
+};
 $("over-ok").onclick = () => { $("over").classList.add("hidden"); leave(); };
 
 // ---- game UI -----------------------------------------------------------------------------------
@@ -97,7 +105,7 @@ function refreshBuilds(): void {
   for (const [type, b] of buildBtns) {
     b.classList.toggle("on", buildType === type);
     const cost = game?.structCost(type) ?? 0;
-    setText(b.querySelector("small") as HTMLElement, `${cost} gold`);
+    setText(b.querySelector("small") as HTMLElement, `${fmt(cost)} gold`);
     b.classList.toggle("poor", !!game && game.me().gold < cost);
   }
 }
@@ -134,8 +142,8 @@ function setHtml(el: HTMLElement, s: string): void {
 function hud(): void {
   if (!game) return;
   const me = game.me();
-  setText($("s-troops"), Math.floor(me.troops).toLocaleString() + " / " + Math.floor(CFG.baseCap + me.tiles * CFG.capPerTile).toLocaleString());
-  setText($("s-gold"), Math.floor(me.gold).toLocaleString());
+  setText($("s-troops"), fmt(me.troops) + " / " + fmt(CFG.baseCap + me.tiles * CFG.capPerTile));
+  setText($("s-gold"), fmt(me.gold));
   setText($("s-land"), ((me.tiles / game.landTiles) * 100).toFixed(1) + "%");
   const rows = [...game.stats.entries()].filter(([, s]) => s.alive).sort((a, b) => b[1].tiles - a[1].tiles).slice(0, 6);
   setHtml($("board"), rows.map(([id, s]) => {
@@ -143,7 +151,7 @@ function hud(): void {
     return `<li class="${id === game!.you ? "me" : ""}"><i style="background:#${p.color.toString(16).padStart(6, "0")}"></i>${esc(p.name)} ${((s.tiles / game!.landTiles) * 100).toFixed(1)}%</li>`;
   }).join(""));
   const incoming = game.attacks.filter((a) => a.on === game!.you && a.by !== game!.you);
-  setHtml($("alerts"), incoming.map((a) => `<div>⚠ ${esc(game!.players.get(a.by)?.name ?? "?")} is invading you${a.pool !== undefined ? ` (${a.pool})` : ""}</div>`).join(""));
+  setHtml($("alerts"), incoming.map((a) => `<div>⚠ ${esc(game!.players.get(a.by)?.name ?? "?")} is invading you${a.pool !== undefined ? ` (${fmt(a.pool)})` : ""}</div>`).join(""));
   $("cancel").classList.toggle("hidden", !game.attacks.some((a) => a.by === game!.you));
   $("pause").classList.toggle("hidden", !isHost);
   setText($("pause"), game.paused ? "▶" : "⏸");
