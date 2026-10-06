@@ -66,7 +66,10 @@ export class Renderer {
   }
 
   resize(): void {
-    this.dpr = Math.min(window.devicePixelRatio || 1, 3);
+    // cap backing-store size: huge canvases are the main cost on phones and software renderers
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const px = this.canvas.clientWidth * this.canvas.clientHeight * this.dpr * this.dpr;
+    if (px > 3_500_000) this.dpr = Math.max(1, Math.sqrt(3_500_000 / (this.canvas.clientWidth * this.canvas.clientHeight)));
     this.cw = this.canvas.clientWidth;
     this.ch = this.canvas.clientHeight;
     this.canvas.width = Math.round(this.cw * this.dpr);
@@ -104,6 +107,13 @@ export class Renderer {
   private flushDirty(): void {
     const g = this.g;
     if (!g.dirty.length) return;
+    if (g.dirty.length > g.owner.length / 4) {
+      // full repaint (game start): every tile exactly once
+      for (let i = 0; i < g.owner.length; i++) this.paint(i);
+      g.dirty = [];
+      this.mapDirty = true;
+      return;
+    }
     for (const i of g.dirty) {
       this.paint(i);
       const x = i % g.w;

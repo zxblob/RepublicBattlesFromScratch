@@ -97,7 +97,7 @@ function refreshBuilds(): void {
   for (const [type, b] of buildBtns) {
     b.classList.toggle("on", buildType === type);
     const cost = game?.structCost(type) ?? 0;
-    b.querySelector("small")!.textContent = `${cost} gold`;
+    setText(b.querySelector("small") as HTMLElement, `${cost} gold`);
     b.classList.toggle("poor", !!game && game.me().gold < cost);
   }
 }
@@ -120,27 +120,36 @@ const input = new Input(canvas, renderer, {
   },
 });
 
-window.addEventListener("resize", () => { if (game) renderer.resize(); });
+window.addEventListener("resize", () => { if (game) { renderer.resize(); forceDraw = true; } });
+
+const lastText = new WeakMap<HTMLElement, string>();
+function setText(el: HTMLElement, s: string): void {
+  if (lastText.get(el) !== s) { lastText.set(el, s); el.textContent = s; }
+}
+const lastHtml = new WeakMap<HTMLElement, string>();
+function setHtml(el: HTMLElement, s: string): void {
+  if (lastHtml.get(el) !== s) { lastHtml.set(el, s); el.innerHTML = s; }
+}
 
 function hud(): void {
   if (!game) return;
   const me = game.me();
-  $("s-troops").textContent = Math.floor(me.troops).toLocaleString() + " / " + Math.floor(CFG.baseCap + me.tiles * CFG.capPerTile).toLocaleString();
-  $("s-gold").textContent = Math.floor(me.gold).toLocaleString();
-  $("s-land").textContent = ((me.tiles / game.landTiles) * 100).toFixed(1) + "%";
+  setText($("s-troops"), Math.floor(me.troops).toLocaleString() + " / " + Math.floor(CFG.baseCap + me.tiles * CFG.capPerTile).toLocaleString());
+  setText($("s-gold"), Math.floor(me.gold).toLocaleString());
+  setText($("s-land"), ((me.tiles / game.landTiles) * 100).toFixed(1) + "%");
   const rows = [...game.stats.entries()].filter(([, s]) => s.alive).sort((a, b) => b[1].tiles - a[1].tiles).slice(0, 6);
-  $("board").innerHTML = rows.map(([id, s]) => {
+  setHtml($("board"), rows.map(([id, s]) => {
     const p = game!.players.get(id)!;
     return `<li class="${id === game!.you ? "me" : ""}"><i style="background:#${p.color.toString(16).padStart(6, "0")}"></i>${esc(p.name)} ${((s.tiles / game!.landTiles) * 100).toFixed(1)}%</li>`;
-  }).join("");
+  }).join(""));
   const incoming = game.attacks.filter((a) => a.on === game!.you && a.by !== game!.you);
-  $("alerts").innerHTML = incoming.map((a) => `<div>⚠ ${esc(game!.players.get(a.by)?.name ?? "?")} is invading you${a.pool !== undefined ? ` (${a.pool})` : ""}</div>`).join("");
+  setHtml($("alerts"), incoming.map((a) => `<div>⚠ ${esc(game!.players.get(a.by)?.name ?? "?")} is invading you${a.pool !== undefined ? ` (${a.pool})` : ""}</div>`).join(""));
   $("cancel").classList.toggle("hidden", !game.attacks.some((a) => a.by === game!.you));
   $("pause").classList.toggle("hidden", !isHost);
-  $("pause").textContent = game.paused ? "▶" : "⏸";
+  setText($("pause"), game.paused ? "▶" : "⏸");
   const banner = $("banner");
-  if (game.paused) { banner.textContent = "Paused"; banner.classList.remove("hidden"); }
-  else if (!me.alive && !game.over) { banner.textContent = "You were eliminated — spectating"; banner.classList.remove("hidden"); }
+  if (game.paused) { setText(banner, "Paused"); banner.classList.remove("hidden"); }
+  else if (!me.alive && !game.over) { setText(banner, "You were eliminated — spectating"); banner.classList.remove("hidden"); }
   else banner.classList.add("hidden");
   refreshBuilds();
 }
@@ -167,10 +176,20 @@ function frame(now: number): void {
     const p = game.players.get(game.you);
     if (p) ov.ringAt = { x: p.cap % game.w, y: Math.floor(p.cap / game.w), r: CFG.structures[hoverBuildBtn].range };
   }
-  renderer.draw(now, ov);
+  // only redraw when something visible changed (idle ~10 fps on each server tick; 30+ fps while animating)
+  const cam = renderer.cam;
+  const sig = `${cam.x.toFixed(2)},${cam.y.toFixed(2)},${cam.zoom.toFixed(3)},${renderer.cw},${renderer.ch}`;
+  const ring = ov.ringAt ? `${ov.ringAt.x},${ov.ringAt.y},${ov.ringAt.r}` : "";
+  const animating = input.lasso.length > 0 || ov.ghosts.length > 0 || game.attacks.length > 0;
+  const changed = sig !== lastSig || game.tick !== lastTick || ring !== lastRing || game.dirty.length > 0 || forceDraw;
+  if (changed || (animating && now - lastDraw > 33)) {
+    lastSig = sig; lastTick = game.tick; lastRing = ring; lastDraw = now; forceDraw = false;
+    renderer.draw(now, ov);
+  }
 }
+let lastSig = "", lastRing = "", lastTick = -1, lastDraw = 0, forceDraw = true;
 requestAnimationFrame(frame);
-setInterval(hud, 200);
+setInterval(hud, 250);
 
 // ---- network -----------------------------------------------------------------------------------
 net.onstatus = (online) => $("offline").classList.toggle("hidden", online || !started);
