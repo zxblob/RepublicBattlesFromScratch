@@ -1,4 +1,5 @@
-import { CFG, MISSILES, MissileKind, STRUCT_TYPES, StructType, TECH, TECH_IDS } from "../core/config";
+import { CFG, DIFFICULTIES, DIFFICULTY, Difficulty, MISSILES, MissileKind, STRUCT_TYPES, StructType, TECH, TECH_IDS } from "../core/config";
+import { DEFAULT_BOTS, MAX_BOTS } from "../core/protocol";
 import type { GameSetup, ServerMsg, UnitK } from "../core/protocol";
 import { fmt } from "./format";
 import { actionInfo, missileInfo, structInfo, toolInfo, unitInfo } from "./info";
@@ -59,6 +60,8 @@ function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
   const seg = (id: string, items: [string, string][], def: string) =>
     `<div class="seg" id="${prefix}-${id}" data-v="${def}">${items.map(([v, l]) => `<button type="button" data-v="${v}" class="${v === def ? "on" : ""}">${l}</button>`).join("")}</div>`;
   root.innerHTML = `
+    <div class="opt"><label>Difficulty</label>${seg("diff", DIFFICULTIES.map((d) => [d, DIFFICULTY[d].label] as [string, string]), "normal")}
+      <small class="muted" id="${prefix}-diff-desc"></small></div>
     <div class="opt"><label>Mode</label>${seg("mode", [["ffa", "Free for all"], ["team", "Teams"], ["ww", "World War"], ["wow", "War of the Worlds"]], "ffa")}
       <small class="muted" id="${prefix}-mode-desc"></small></div>
     <div class="opt" id="${prefix}-teams-row"><label>Teams: <b id="${prefix}-teams-n">2</b></label><input id="${prefix}-teams" type="range" min="2" max="6" value="2"></div>
@@ -66,7 +69,7 @@ function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
     <div class="opt" id="${prefix}-size-row"><label>Random map size</label>${seg("size", [["small", "Small"], ["medium", "Medium"], ["large", "Large"], ["huge", "Huge"]], "small")}
       <small class="muted" id="${prefix}-size-desc"></small></div>
     <div class="opt check" id="${prefix}-islands-row"><input id="${prefix}-islands" type="checkbox"><label for="${prefix}-islands">Islands (needs ports and boats)</label></div>
-    <div class="opt"><label>Rival nations: <b id="${prefix}-bots-n">10</b></label><input id="${prefix}-bots" type="range" min="0" max="20" value="10"></div>
+    <div class="opt"><label>Rival nations: <b id="${prefix}-bots-n">10</b></label><input id="${prefix}-bots" type="range" min="0" max="40" value="15"></div>
     <div class="opt check"><input id="${prefix}-coop" type="checkbox"><label for="${prefix}-coop">Co-op: all human players are one team against the bots</label></div>
     <div class="opt check"><input id="${prefix}-dom" type="checkbox" checked><label for="${prefix}-dom">Dominance victory (a clear leader wins after a 5 min countdown)</label></div>
     <div class="opt"><label>Or a custom map code (from the map editor)</label><input id="${prefix}-map" maxlength="10" placeholder="optional" autocapitalize="characters"></div>`;
@@ -78,9 +81,10 @@ function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
     wow: "World War, then a space race to other planets.",
   };
   const SIZE_DESC: Record<string, string> = {
-    small: "192×112", medium: "320×192", large: "512×320", huge: "1024×640 (needs a strong server)",
+    small: "192×112", medium: "320×192", large: "512×320", huge: "1024×640 (a crowded world, needs a strong server)",
   };
   const val = (id: string) => g<HTMLElement>(id).dataset.v!;
+  let lastSize = "small";
   const sync = () => {
     g("teams-row").classList.toggle("hidden", val("mode") !== "team");
     g("teams-n").textContent = g<HTMLInputElement>("teams").value;
@@ -90,9 +94,12 @@ function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
     const premade = val("pre") !== "";
     g("size-row").classList.toggle("hidden", premade);
     g("islands-row").classList.toggle("hidden", premade);
-    const max = { small: 20, medium: 30, large: 40, huge: 60 }[val("size") as "small"];
+    g("diff-desc").textContent = DIFFICULTY[val("diff") as Difficulty].desc;
+    const size = val("size") as keyof typeof MAX_BOTS;
+    const max = MAX_BOTS[size];
     const bots = g<HTMLInputElement>("bots");
     bots.max = String(max);
+    if (size !== lastSize) { lastSize = size; bots.value = String(DEFAULT_BOTS[size]); }
     if (Number(bots.value) > max) bots.value = String(max);
   };
   root.addEventListener("click", (e) => {
@@ -106,6 +113,7 @@ function mountOptions(root: HTMLElement, prefix: string): () => GameSetup {
   root.addEventListener("input", sync);
   sync();
   return () => ({
+    difficulty: val("diff") as Difficulty,
     mode: val("mode") as GameSetup["mode"],
     teams: Number(g<HTMLInputElement>("teams").value),
     bots: Number(g<HTMLInputElement>("bots").value),
@@ -593,6 +601,47 @@ const input = new Input(canvas, renderer, {
 
 window.addEventListener("resize", () => { if (game) { renderer.resize(); forceDraw = true; } });
 
+// overview map: tap or drag to move the camera
+const mini = $<HTMLCanvasElement>("mini");
+function miniMove(e: PointerEvent): void {
+  if (!game) return;
+  const b = mini.getBoundingClientRect();
+  renderer.cam.x = Math.max(0, Math.min(game.w, ((e.clientX - b.left) / b.width) * game.w));
+  renderer.cam.y = Math.max(0, Math.min(game.h, ((e.clientY - b.top) / b.height) * game.h));
+  forceDraw = true;
+}
+mini.onpointerdown = (e) => { try { mini.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ } miniMove(e); };
+mini.onpointermove = (e) => { if (e.buttons) miniMove(e); };
+setInterval(() => { if (game && !document.hidden) renderer.drawMini(mini); }, 250);
+
+// keyboard: 1-9 pick a building, - / = change the attack share, WASD pan, Q/E zoom, H home, Esc cancel
+window.addEventListener("keydown", (e) => {
+  if (!game || game.sp > 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target as HTMLElement;
+  if (t && (t.tagName === "INPUT" && (t as HTMLInputElement).type !== "range" || t.tagName === "TEXTAREA")) return;
+  const k = e.key.toLowerCase();
+  if (/^[1-9]$/.test(k)) {
+    const avail = STRUCT_TYPES.filter((x) => structAvailable(x));
+    const type = avail[Number(k) - 1];
+    if (type) { buildBtns.get(type)!.click(); e.preventDefault(); }
+  } else if (k === "escape") { clearTools(); closeAttackMenu(); radial.close(); }
+  else if (k === "-" || k === "=" || k === "+") {
+    ratioEl.value = String(Math.max(5, Math.min(100, Number(ratioEl.value) + (k === "-" ? -5 : 5))));
+    ratioEl.oninput?.(new Event("input"));
+    toast(`Troops per attack ${ratioEl.value}%`);
+  } else if (k === "h") $("home").click();
+  else if (k === "q" || k === "e") { renderer.cam.zoom = Math.max(renderer.minZoom(), Math.min(48, renderer.cam.zoom * (k === "e" ? 1.25 : 0.8))); forceDraw = true; }
+  else if (["w", "a", "s", "d", "arrowup", "arrowleft", "arrowdown", "arrowright"].includes(k)) {
+    const step = 90 / renderer.cam.zoom;
+    if (k === "w" || k === "arrowup") renderer.cam.y -= step;
+    if (k === "s" || k === "arrowdown") renderer.cam.y += step;
+    if (k === "a" || k === "arrowleft") renderer.cam.x -= step;
+    if (k === "d" || k === "arrowright") renderer.cam.x += step;
+    forceDraw = true;
+    e.preventDefault();
+  }
+});
+
 const lastText = new WeakMap<HTMLElement, string>();
 function setText(el: HTMLElement, s: string): void {
   if (lastText.get(el) !== s) { lastText.set(el, s); el.textContent = s; }
@@ -629,11 +678,14 @@ function hud(): void {
   setText($("s-troops"), fmt(me.troops) + " / " + fmt(CFG.baseCap + me.tiles * CFG.capPerTile));
   setText($("s-gold"), fmt(me.gold));
   setText($("s-land"), ((me.tiles / game.landTiles) * 100).toFixed(1) + "%");
-  const rows = [...game.stats.entries()].filter(([, s]) => s.alive).sort((a, b) => b[1].tiles - a[1].tiles).slice(0, 6);
-  setHtml($("board"), rows.map(([id, s]) => {
+  const ranked = [...game.stats.entries()].filter(([, s]) => s.alive).sort((a, b) => b[1].tiles - a[1].tiles);
+  const rows = ranked.slice(0, 8).map(([id, s], i) => ({ id, s, rank: i + 1 }));
+  const myRank = ranked.findIndex(([id]) => id === game!.you);
+  if (myRank >= 8) rows.push({ id: game.you, s: game.stats.get(game.you)!, rank: myRank + 1 });
+  setHtml($("board"), rows.map(({ id, s, rank }) => {
     const p = game!.players.get(id)!;
-    return `<li class="${id === game!.you ? "me" : ""}"><i style="background:#${p.color.toString(16).padStart(6, "0")}"></i>${esc(p.name)} ${((s.tiles / game!.landTiles) * 100).toFixed(1)}%</li>`;
-  }).join(""));
+    return `<li class="${id === game!.you ? "me" : ""}" value="${rank}"><i style="background:#${p.color.toString(16).padStart(6, "0")}"></i>${esc(p.name)} ${((s.tiles / game!.landTiles) * 100).toFixed(1)}%<small>${fmt(s.troops)}</small></li>`;
+  }).join("") + `<li class="muted"><small>${ranked.length} nations left</small></li>`);
   const incoming = game.attacks.filter((a) => a.on === game!.you && a.by !== game!.you);
   setHtml($("alerts"), incoming.map((a) => `<div>⚠ ${esc(game!.players.get(a.by)?.name ?? "?")} is invading you${a.pool !== undefined ? ` (${fmt(a.pool)})` : ""}</div>`).join(""));
   $("cancel").classList.toggle("hidden", !game.attacks.some((a) => a.by === game!.you));
@@ -754,6 +806,8 @@ net.onmsg = (m: ServerMsg) => {
       applyQuality();
       const me = game.players.get(game.you);
       if (me && game.sp === 0) renderer.centerOn(me.cap, Math.max(renderer.cam.zoom, window.innerWidth < 700 ? 6 : 9));
+      // crowded maps: open on your own homeland instead of a postage-stamp view of the whole world
+      else if (me && game.w * game.h > 150_000) renderer.centerOn(me.cap, window.innerWidth < 700 ? 4 : 5);
       $("over").classList.add("hidden");
       $("ready").textContent = "Ready";
       clearTools();

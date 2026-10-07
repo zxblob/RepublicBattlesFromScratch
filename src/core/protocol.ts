@@ -1,4 +1,4 @@
-import type { StructType } from "./config";
+import type { Difficulty, StructType } from "./config";
 
 export type Mode = "ffa" | "team" | "ww" | "wow";
 export type MapSize = "small" | "medium" | "large" | "huge";
@@ -11,7 +11,13 @@ export const MAP_SIZES: Record<MapSize, [number, number]> = {
   huge: [1024, 640],
 };
 
+/** most nations a random map of each size allows (frontwars-style crowded maps) */
+export const MAX_BOTS: Record<MapSize, number> = { small: 40, medium: 80, large: 150, huge: 250 };
+/** a good default number of nations per size */
+export const DEFAULT_BOTS: Record<MapSize, number> = { small: 15, medium: 40, large: 80, huge: 160 };
+
 export interface GameSetup {
+  difficulty: Difficulty;
   mode: Mode;
   teams: number;
   bots: number;

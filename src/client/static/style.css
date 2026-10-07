@@ -154,3 +154,8 @@ img.ic { width: 22px; height: 22px; image-rendering: pixelated; vertical-align: 
 #tip p { margin: 3px 0; color: var(--text); line-height: 1.35; }
 #tip .tip-c { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); font-weight: 700; color: #ffe678; }
 #tip .tip-w { margin-top: 4px; color: #ff8a80; font-weight: 600; }
+
+#mini { position: absolute; right: calc(var(--safe-r) + 8px); bottom: calc(var(--safe-b) + 150px); width: 190px; background: #0b1a2b; border: 1px solid var(--line);
+  border-radius: 10px; opacity: 0.92; touch-action: none; cursor: crosshair; }
+#board li small { color: var(--muted); margin-left: 6px; font-variant-numeric: tabular-nums; }
+@media (max-width: 560px), (max-height: 520px) { #mini { width: 120px; bottom: calc(var(--safe-b) + 190px); } }

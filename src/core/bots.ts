@@ -1,4 +1,4 @@
-import { CFG, MISSILES, MissileKind, TECH, TECH_IDS } from "./config";
+import { DIFFICULTY, MISSILES, MissileKind, TECH, TECH_IDS } from "./config";
 import type { StructType } from "./config";
 import type { Game, Player } from "./game";
 import { Terrain } from "./mapgen";
@@ -15,6 +15,7 @@ function pick<T>(g: Game, arr: T[]): T {
  */
 export function botThink(g: Game, p: Player): void {
   if (!p.alive || g.over) return;
+  const dif = DIFFICULTY[g.difficulty];
   botResearch(g, p);
   const scan = g.scanBorder(p.id);
   tryBuild(g, p, scan.ownFront);
@@ -29,7 +30,7 @@ export function botThink(g: Game, p: Player): void {
   if (wantNeutral) {
     const start = pick(g, scan.neutral);
     const region = g.grow(start, (t) => g.owner[t] === 0, 160);
-    g.launchAttackTiles(p.id, region, 0.3);
+    g.launchAttackTiles(p.id, region, dif.expandRatio);
     return;
   }
   if (peace || g.tickNo < p.nextAggression || scan.enemies.size === 0) return;
@@ -37,18 +38,23 @@ export function botThink(g: Game, p: Player): void {
   let target = 0;
   for (const id of scan.enemies.keys()) {
     const e = g.players[id];
-    if (g.attackersOn(id) >= CFG.botMaxAttackersPerTarget) continue;
-    if (p.troops < e.troops * 1.2) continue;
+    if (g.attackersOn(id) >= dif.attackers) continue;
+    if (p.troops < e.troops * dif.threshold) continue;
     if (target === 0 || e.troops < g.players[target].troops) target = id;
+  }
+  // retaliation: whoever is invading us right now gets hit back first
+  if (dif.smart) {
+    const hitMe = g.attacks.find((a) => a.on === p.id && scan.enemies.has(a.by) && p.troops >= g.players[a.by].troops * 0.5);
+    if (hitMe) target = hitMe.by;
   }
   if (!target) return;
   const e = g.players[target];
   const ratio =
-    (e.tiles < CFG.smallTiles ? CFG.botMaxRatioVsSmall : CFG.botMaxRatioVsPlayer) * Math.min(1.2, p.aggression);
+    (e.tiles < 120 ? dif.ratioSmall : dif.ratioPlayer) * Math.min(1.2, p.aggression);
   const start = pick(g, scan.enemies.get(target)!);
   const region = g.grow(start, (t) => g.owner[t] === target, 140);
   if (g.launchAttackTiles(p.id, region, ratio).ok) {
-    p.nextAggression = g.tickNo + Math.round(CFG.botPlayerCooldown / p.aggression);
+    p.nextAggression = g.tickNo + Math.round(dif.cooldown / p.aggression);
   }
 }
 
@@ -66,7 +72,7 @@ function botResearch(g: Game, p: Player): void {
 function tryBuild(g: Game, p: Player, front: number[]): void {
   const options: StructType[] = ["bunker", "bank", "radar", "sam", "city", "farm", "port", "factory", "tankfactory", "airbase", "silo"];
   if (g.research) options.push("lab");
-  const type = pick(g, options);
+  const type = DIFFICULTY[g.difficulty].smart ? smartPick(g, p, front, options) : pick(g, options);
   if (p.gold < g.structureCost(p.id, type) + 50) return;
   let tile = -1;
   if (type === "bunker" || type === "sam") {
@@ -74,6 +80,8 @@ function tryBuild(g: Game, p: Player, front: number[]): void {
     tile = pick(g, front);
   } else if (type === "port") {
     tile = g.randomOwnedTile(p.id, (t) => g.isCoastal(t) && g.terrain[t] === Terrain.Land);
+  } else if (DIFFICULTY[g.difficulty].smart) {
+    tile = g.randomOwnedTile(p.id, (t) => g.terrain[t] === Terrain.Land);
   } else {
     if (p.capital < 0) return;
     const cx = p.capital % g.w, cy = (p.capital / g.w) | 0;
@@ -81,6 +89,23 @@ function tryBuild(g: Game, p: Player, front: number[]): void {
   }
   if (tile < 0 || tile >= g.owner.length) return;
   g.build(p.id, type, tile % g.w, (tile / g.w) | 0);
+}
+
+/** Economy first (cities, farms, banks, a port), defence where we are being hit, then the heavy hitters. */
+function smartPick(g: Game, p: Player, front: number[], options: StructType[]): StructType {
+  const n = (t: StructType) => g.ownedCount(p.id, t);
+  const underAttack = g.attackersOn(p.id) > 0;
+  const want: StructType[] = [];
+  if (n("city") < 1 + p.tiles / 120) want.push("city", "city");
+  if (n("farm") < 1 + p.tiles / 200) want.push("farm");
+  if (n("bank") < 1 + p.tiles / 250) want.push("bank");
+  if (!n("port")) want.push("port");
+  if (underAttack && front.length) want.push("bunker", "bunker", "bunker");
+  if (g.structures.some((s) => s.owner !== p.id && (s.type === "airbase") && !g.friendly(p.id, s.owner))) want.push("sam");
+  if (p.gold > 1500) want.push("tankfactory", "airbase", "silo");
+  if (g.research && !n("lab")) want.push("lab");
+  const ok = want.filter((t) => options.includes(t));
+  return ok.length ? pick(g, ok) : pick(g, options);
 }
 
 /** Bots with a Port ferry troops to foreign or neutral coasts when they have nobody to reach by land. */

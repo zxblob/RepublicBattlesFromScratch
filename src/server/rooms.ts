@@ -7,7 +7,8 @@ import { Game, GameSnapshot } from "../core/game";
 import type {
   AttackInfo, ClientMsg, GameSetup, LobbyMember, MeInfo, PlayerStat, ServerMsg, StructInfo, UnitInfo,
 } from "../core/protocol";
-import { MAP_SIZES, rle } from "../core/protocol";
+import { MAP_SIZES, MAX_BOTS, rle } from "../core/protocol";
+import { DIFFICULTIES, Difficulty } from "../core/config";
 import { loadMap } from "./maps";
 
 const BOT_NAMES = [
@@ -18,7 +19,6 @@ const BOT_NAMES = [
 
 export const SAVE_DIR = resolve(process.env.SAVE_DIR ?? "data/saves");
 const SPAWN_TICKS = 200; // 20 s to pick a start
-const MAX_BOTS = { small: 20, medium: 30, large: 40, huge: 60 } as const;
 const MAX_SKIN = 14_000;
 
 interface Client {
@@ -45,7 +45,7 @@ interface SaveFile {
 }
 
 export function defaultSetup(): GameSetup {
-  return { mode: "ffa", teams: 2, bots: 10, size: "small", islands: false, map: "", dominance: true, coop: false };
+  return { difficulty: "normal", mode: "ffa", teams: 2, bots: 12, size: "small", islands: false, map: "", dominance: true, coop: false };
 }
 
 function cleanSetup(s: Partial<GameSetup> | undefined): GameSetup {
@@ -53,8 +53,9 @@ function cleanSetup(s: Partial<GameSetup> | undefined): GameSetup {
   const o = s ?? {};
   const mode = (["ffa", "team", "ww", "wow"] as const).includes(o.mode as never) ? (o.mode as GameSetup["mode"]) : d.mode;
   const size = (["small", "medium", "large", "huge"] as const).includes(o.size as never) ? (o.size as GameSetup["size"]) : d.size;
+  const difficulty = DIFFICULTIES.includes(o.difficulty as Difficulty) ? (o.difficulty as Difficulty) : d.difficulty;
   return {
-    mode, size,
+    difficulty, mode, size,
     teams: Math.max(2, Math.min(6, Math.floor(Number(o.teams)) || 2)),
     bots: Math.max(0, Math.min(MAX_BOTS[size], Math.floor(Number(o.bots)) || 0)),
     islands: !!o.islands,
@@ -142,7 +143,7 @@ export class Room {
     if (humans.length + setup.bots < 2) return "need at least 2 players";
     if (this.game) return "already started";
     const seed = (Math.random() * 2 ** 31) | 0;
-    const game = new Game(seed, w, h, { mode: setup.mode, teams: setup.teams, islands: setup.islands, terrain, dominance: setup.dominance });
+    const game = new Game(seed, w, h, { mode: setup.mode, teams: setup.teams, islands: setup.islands, terrain, dominance: setup.dominance, difficulty: setup.difficulty });
     for (const c of humans) {
       const p = game.addPlayer(c.name, false);
       c.playerId = p.id;

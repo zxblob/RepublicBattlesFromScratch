@@ -7,7 +7,7 @@ Written from scratch (TypeScript, Node, WebSocket, Canvas). MIT licensed.
 
 ## Play
 
-- **Solo** against 1–20 nation bots, or **create a private lobby** and share the 5-letter code.
+- **Solo** against up to 250 nation bots (crowded, frontwars-style maps; the cap depends on map size), or **create a private lobby** and share the 5-letter code.
 - **Radial menu:** tap any land with no tool active and a ring of round buttons opens around your finger. On your own land: Economy / Military build rings (pixel icons and costs), Wall, Rail. On neutral land: Expand (quick attack) and Missile. On a rival: Attack, Missile, Ally, Embargo. On an ally: give troops or gold, or break the alliance. Tap the centre to go back or close; Esc also closes it.
 - **Invade:** drag to lasso an area of enemy or neutral land that touches your border. Your troops commit to that area only,
   scaled by the *Troops per attack* slider.
@@ -37,6 +37,7 @@ Written from scratch (TypeScript, Node, WebSocket, Canvas). MIT licensed.
 - **Nukes:** Atom bomb, Hydrogen bomb (big radius) and MIRV (six warheads), launched from silos, interceptable by SAMs.
 - **Economy extras:** Factories, drawable Rails: draw a line from one City/Factory/Port to another and the ends snap onto nearby buildings. A connected network pays gold for every linked building, and **trains** shuttle along the line between the buildings it links: every arrival pays gold (0.2 per tile of track, +50% between nations, split between both owners), and rails can run across **allied land** to link your bases with an ally's (+50% income, shared between you; breaking the alliance cuts the line). Also automatic Trade Ships between ports (embargo-able), donating troops or gold to allies, quick chat and emoji pings.
 - **Victory timers:** a clear leader triggers a 5-minute dominance countdown (lobby option); every game has a 2-hour limit.
+- **Difficulty:** Easy / Normal / Hard / Impossible. Higher levels make nations hit harder and more often, retaliate, build with a plan, grow faster, and make nation land costlier for you to take. **Keys:** 1-9 pick a building, - / = change the attack share, WASD pan, Q/E zoom, H home, Esc cancel. An overview **minimap** (tap to move) and a top-8 leaderboard with troops are always on screen.
 - **Maps:** small to huge (1024×640) procedural maps, an Islands option, and custom maps from the in-browser **map editor** (`/editor.html`, Pencil supported). Publish to get a code, enter it when starting a game.
 - **Pixel sprites:** 22 original 32×32 top-down sprites in `resources/sprites/` (buildings, tanks, planes, boats, missile, capital flag). Magenta pixels are recoloured to each nation's colour at runtime. Regenerate with `node scripts/make-sprites.mjs`, or replace the PNGs with your own art using the same file names (keep magenta `#FF00FF`, `#AA00AA`, `#FFAAFF` for team colour). If a PNG fails to load the game falls back to vector shapes.
 - **Country image:** upload a picture that is tiled over your land.

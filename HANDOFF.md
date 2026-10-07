@@ -134,9 +134,31 @@ Draw-to-invade = lasso region touching your border; TypeScript + Node authoritat
 
 ---
 
-## 5. Current mission: get closer to MSN FrontWars (research notes + plan)
+## 5. Current mission: get closer to FrontWars (frontwars.io studied 2026-10-07)
 
-Owner feedback after playing: **"I like the gameplay, but our game is too easy, and the Huge map feels small."** Next session's job is to fix those two things and move the feel closer to FrontWars.
+Owner feedback: **"too easy, and the Huge map feels small"**. Session 2 studied frontwars.io in the browser pane (reject cookies via "Advanced Settings" then "Reject all"; the game starts a solo match straight away) and implemented the first batch below.
+
+### 5.0 What frontwars.io actually does (observed, not from wikis)
+- **Crowded world:** a real-world map (Australia seen) with **~200 nations** (leaderboard "206 players"), every nation starts as a tiny blob (~0.3% of land, ~1K troops, ~5K gold) while **you start with 25K troops** and gold. Nations are placed automatically; spawn phase lasts a few seconds. Name labels show nation name + troops and scale with zoom (names disappear when zoomed out).
+- **Controls:** click neutral/enemy land next to your border = attack with the **Attack ratio** slider (default 20%, shows troop count); sliders for **Donate Troops** and **Donate Gold** (10%); right-click your land = **radial menu** (Build wrench, Info, Delete unit, Attack, Alliance, ...); **hotbar 1-0** = City, Factory, Port, Defense Post, Missile Silo, SAM, Warship, Atom bomb, Hydrogen bomb, MIRV; wheel/QE zoom, WASD pan, Space toggles terrain/political view.
+- **Info panel** on hover: owner, troops, attacking troops, gold, building counts. **Leaderboard** columns: rank, player, owned %, gold, troops (with "Show All"). Event panel with tabs Attacks / Nukes / Trade / Alliances / Chat. Top bar: replay, pause, settings, exit. A **mission strip** guides new players (Claim 300 tiles, Found your first City, ...).
+- **Pace:** bot nations grow from ~1K to ~4K troops in ~15 s; gold income is high (~1K/s early) so buildings are bought constantly; attacks show a red front line and the committed troop count on the front; conquering a bot's land is fast at first.
+
+### 5.0b Done this session (all in git, 60 tests green)
+- **Difficulty** (`DIFFICULTY` in `config.ts`, `GameOptions.difficulty`, lobby/solo option, saved in snapshots): Easy = old behaviour; Normal/Hard/Impossible scale bot attack ratio, cooldown, max attackers per target, attack threshold, bot regen and gold, extra cost for humans to take bot land, retaliation against whoever attacks a bot, and **smart build order** (`smartPick` in `bots.ts`: economy first, bunkers when attacked, SAM vs enemy airbases). Default is **Normal**.
+- **Crowded maps:** `MAX_BOTS` small 40 / medium 80 / large 150 / huge 250 and `DEFAULT_BOTS` (15/40/80/160) in `protocol.ts`; options slider follows the map size.
+- **Server perf for 250 nations** (`game.ts`): structure lookup caches (`structsOfType`, `ownedCount` via `refreshCaches`, `structVer`), typed-array water BFS. Huge/250 bots: avg tick 6.1 -> 2.9 ms, worst 254 -> 23 ms.
+- **Client:** opens on your own homeland on big maps (not a fit-to-screen stamp), **minimap** (tap/drag to move), leaderboard top 8 with troops + "N nations left", up to 140 name labels, keys 1-9 build / `-` `=` attack share / WASD / Q E / H / Esc, default attack share 40%.
+- Test: `tests/difficulty.test.ts`. Throwaway sim approach: bundle a script with esbuild, build a `Game`, add bots, `tick()`; the passive/bot "human" proxy dies early, so balance still needs a real human playtest.
+
+### 5.0c Still to do to match frontwars.io (priority order)
+1. **Playtest balance with a real human** at Normal/Hard on huge/160 nations; tune the `DIFFICULTY` table. Target: Normal is a fair fight, Hard punishes mistakes.
+2. **Starting asymmetry like frontwars** (you ~25x a bot's troops, bots tiny): optional "Underdog bots" start (`startTroops` per bot lower than human) so early land-grab is fast and the late game is the challenge. Nation blobs could also be smaller/denser (`spawnRadius2`, `minDist` in `spawnAll`).
+3. **Donate sliders + info panel on hover** (owner, troops, attacking troops, gold, building counts) for any nation; leaderboard with gold column and "Show all".
+4. **Event panel** with tabs (Attacks / Nukes / Trade / Alliances / Chat) instead of toasts; mission strip / tutorial.
+5. **Hotbar for units/missiles** (Warship, Atom/Hydrogen/MIRV on 7-0) and a Space toggle for political/terrain view.
+6. **Bigger worlds:** a 2048x1280 size needs area-of-interest tile filtering (client sends viewport, server filters diffs, resyncs on pan); pace scaling (`maxTilesPerTick`, unit speeds) by map size.
+7. Keep: lasso attack (owner likes it) + existing quick-tap attack; do not replace with click-only.
 
 ### 5.1 What was researched (and what could not be)
 - **MSN FrontWars itself could not be studied this session.** `msn.com/en-us/play/games/frontwars/` redirects to the MSN home page behind a cookie wall; `WebFetch` gets nothing (JS shell). If you retry, use the browser pane, decline cookies, find the game via MSN Games search, and sit through the ads. Do not copy art/code (see section 1), but watching pacing, map size and bot behaviour is fine.

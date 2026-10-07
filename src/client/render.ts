@@ -460,7 +460,7 @@ export class Renderer {
     // names + troop counts
     let drawn = 0;
     for (const l of this.labels) {
-      if (drawn >= 40) break;
+      if (drawn >= 140) break;
       const p = g.players.get(l.id);
       const st = g.stats.get(l.id);
       if (!p || !st || !st.alive) continue;
@@ -482,6 +482,29 @@ export class Renderer {
       ctx.fillText(t, sx, sy + size * 0.5);
     }
     this.drawEmojis(ctx, now);
+  }
+
+  /** Overview map for navigation: the painted world plus the current viewport rectangle. */
+  drawMini(mini: HTMLCanvasElement): void {
+    const g = this.g;
+    if (!g) return;
+    const mw = mini.clientWidth, mh = Math.round((mini.clientWidth * g.h) / g.w);
+    if (mini.width !== mw || mini.height !== mh) { mini.width = mw; mini.height = mh; mini.style.height = mh + "px"; }
+    const c = mini.getContext("2d")!;
+    c.imageSmoothingEnabled = false;
+    c.drawImage(this.mapCanvas, 0, 0, mw, mh);
+    const k = mw / g.w;
+    const vw = this.cw / this.cam.zoom, vh = this.ch / this.cam.zoom;
+    c.strokeStyle = "#fff";
+    c.lineWidth = 1.5;
+    c.strokeRect((this.cam.x - vw / 2) * k, (this.cam.y - vh / 2) * k, vw * k, vh * k);
+    const me = g.players.get(g.you);
+    if (me && me.cap >= 0) {
+      c.fillStyle = "#ffe066";
+      c.beginPath();
+      c.arc(((me.cap % g.w) + 0.5) * k, (Math.floor(me.cap / g.w) + 0.5) * k, 2.5, 0, Math.PI * 2);
+      c.fill();
+    }
   }
 
   private drawEmojis(ctx: CanvasRenderingContext2D, now: number): void {

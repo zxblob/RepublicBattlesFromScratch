@@ -176,3 +176,17 @@ export const MISSILES = {
   mirv: { label: "MIRV", cost: 1400, radius: 3, share: 0.25, cd: 2400 },
 } as const;
 export type MissileKind = keyof typeof MISSILES;
+
+export type Difficulty = "easy" | "normal" | "hard" | "impossible";
+export const DIFFICULTIES: Difficulty[] = ["easy", "normal", "hard", "impossible"];
+
+/**
+ * Nation AI strength. "easy" is the original behaviour. Higher levels make nations hit harder and more often,
+ * make bot land costlier for humans to take, speed up bot economies and let bots build with a plan.
+ */
+export const DIFFICULTY = {
+  easy: { label: "Easy", desc: "Nations are slow and cautious.", humanAtk: 1, botDef: 1, botRegen: 1, botGold: 1, ratioPlayer: 0.4, ratioSmall: 0.2, cooldown: 200, attackers: 2, threshold: 1.2, smart: false, expandRatio: 0.3 },
+  normal: { label: "Normal", desc: "Nations expand fast and defend themselves.", humanAtk: 1.3, botDef: 1.15, botRegen: 1.15, botGold: 1.2, ratioPlayer: 0.5, ratioSmall: 0.3, cooldown: 140, attackers: 2, threshold: 1, smart: true, expandRatio: 0.4 },
+  hard: { label: "Hard", desc: "Nations gang up, retaliate and out-build you.", humanAtk: 1.7, botDef: 1.4, botRegen: 1.4, botGold: 1.5, ratioPlayer: 0.65, ratioSmall: 0.4, cooldown: 90, attackers: 3, threshold: 0.8, smart: true, expandRatio: 0.5 },
+  impossible: { label: "Impossible", desc: "Ruthless, rich nations. Expect to be hunted.", humanAtk: 2.2, botDef: 1.8, botRegen: 1.8, botGold: 2, ratioPlayer: 0.8, ratioSmall: 0.55, cooldown: 50, attackers: 4, threshold: 0.6, smart: true, expandRatio: 0.6 },
+} as const;

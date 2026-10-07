@@ -1,4 +1,4 @@
-import { CFG, MISSILES, MissileKind, StructType, TECH, TechId } from "./config";
+import { CFG, DIFFICULTY, Difficulty, MISSILES, MissileKind, StructType, TECH, TechId } from "./config";
 import { rasterizePolygon } from "./geometry";
 import { generateMap, Terrain } from "./mapgen";
 import { mulberry32, Rng } from "./rng";
@@ -41,6 +41,8 @@ export interface GameOptions {
   planet?: string;
   /** dominance countdown victory (default on) */
   dominance?: boolean;
+  /** nation AI strength (default "easy" = original behaviour) */
+  difficulty?: Difficulty;
 }
 
 export interface Structure {
@@ -138,7 +140,7 @@ export interface GameSnapshot {
   v: number;
   seed: number; w: number; h: number; mode: GameMode; teams: number; planet: string;
   terrain: number[]; owner: number[]; wall: number[]; rail?: number[];
-  dominance?: boolean; domLeader?: number; domTicks?: number;
+  dominance?: boolean; domLeader?: number; domTicks?: number; difficulty?: Difficulty;
   players: Player[]; structures: Structure[];
   attacks: (Omit<Attack, "tiles"> & { tiles: number[] })[];
   units: Unit[]; missiles: Missile[];
@@ -169,8 +171,18 @@ export class Game {
   teams: number;
   readonly planet: string;
   readonly dominance: boolean;
+  readonly difficulty: Difficulty;
   /** trains shuttling between the buildings a rail network links; every arrival pays gold */
   trains: Train[] = [];
+  /** bumped whenever a structure is added or removed; invalidates the lookup caches below */
+  private structVer = 0;
+  private cacheVer = -1;
+  private bfsPrev: Int32Array | null = null;
+  private bfsSeen: Uint32Array | null = null;
+  private bfsQueue: Int32Array | null = null;
+  private bfsStamp = 0;
+  private byTypeCache = new Map<string, Structure[]>();
+  private countsCache = new Map<number, Record<string, number>>();
   /** gold earned from trains so far, per player (statistics) */
   railEarned = new Map<number, number>();
   private nextTrainId = 1;
@@ -216,6 +228,7 @@ export class Game {
     this.teams = this.mode === "team" ? Math.max(2, Math.min(6, opts.teams ?? 2)) : 0;
     this.planet = opts.planet ?? "";
     this.dominance = opts.dominance !== false;
+    this.difficulty = opts.difficulty && opts.difficulty in DIFFICULTY ? opts.difficulty : "easy";
     this.research = this.mode === "ww" || this.mode === "wow";
     this.thinkEvery = w * h > 400_000 ? 30 : w * h > 150_000 ? 20 : 10;
     this.phase = this.planet ? "war" : this.research ? "expand" : "play";
@@ -443,9 +456,8 @@ export class Game {
   }
 
   ownedCount(pid: number, type: StructType): number {
-    let n = 0;
-    for (const s of this.structures) if (s.owner === pid && s.type === type) n++;
-    return n;
+    this.refreshCaches();
+    return this.countsCache.get(pid)?.[type] ?? 0;
   }
 
   maxTroops(p: Player): number {
@@ -455,8 +467,7 @@ export class Game {
   }
 
   structureCost(pid: number, type: StructType): number {
-    let n = 0;
-    for (const s of this.structures) if (s.owner === pid && s.type === type) n++;
+    const n = this.ownedCount(pid, type);
     return Math.round(CFG.structures[type].cost * Math.pow(CFG.structCostGrowth, n));
   }
 
@@ -505,6 +516,7 @@ export class Game {
     const i = this.structures.indexOf(s);
     if (i >= 0) this.structures.splice(i, 1);
     this.structDirty = true;
+    this.structVer++;
   }
 
   // ---- combat ---------------------------------------------------------------------------------
@@ -522,6 +534,9 @@ export class Game {
       const density = Math.max(d.troops / Math.max(d.tiles, 1), CFG.minDensity);
       const small = 1 + CFG.smallBonusMax * Math.max(0, Math.min(1, (CFG.smallTiles - d.tiles) / CFG.smallTiles));
       cost = density * small * CFG.playerCostMult * (t === Terrain.Mountain ? CFG.mountainMult : 1);
+      const dif = DIFFICULTY[this.difficulty];
+      if (d.isBot) cost *= dif.botDef;
+      if (!this.players[attacker].isBot) cost *= dif.humanAtk;
       if (d.tech.length && this.has(d, "def1")) cost *= 1.15;
       if (this.planet && this.has(d, "space3")) cost *= 1.3;
       if (d.capital >= 0) {
@@ -544,10 +559,31 @@ export class Game {
     return cost;
   }
 
+  private refreshCaches(): void {
+    if (this.cacheVer === this.structVer) return;
+    this.cacheVer = this.structVer;
+    this.byTypeCache.clear();
+    this.countsCache.clear();
+    for (const st of this.structures) {
+      let l = this.byTypeCache.get(st.type);
+      if (!l) this.byTypeCache.set(st.type, (l = []));
+      l.push(st);
+      const c = this.countsCache.get(st.owner) ?? {};
+      c[st.type] = (c[st.type] ?? 0) + 1;
+      this.countsCache.set(st.owner, c);
+    }
+  }
+
+  /** All structures of one type (cached; do not mutate). */
+  structsOfType(type: StructType): Structure[] {
+    this.refreshCaches();
+    return this.byTypeCache.get(type) ?? [];
+  }
+
   private inRange(pid: number, type: StructType, x: number, y: number): boolean {
     const r = CFG.structures[type].range;
-    for (const s of this.structures) {
-      if (s.owner !== pid || s.type !== type) continue;
+    for (const s of this.structsOfType(type)) {
+      if (s.owner !== pid) continue;
       const dx = s.x - x, dy = s.y - y;
       if (dx * dx + dy * dy <= r * r) return true;
     }
@@ -717,6 +753,7 @@ export class Game {
     p.gold -= cost;
     const s: Structure = { id: this.nextStructId++, type, owner: pid, tile, x, y };
     this.structures.push(s);
+    this.structVer++;
     this.structAt.set(tile, s);
     this.structDirty = true;
     this.railStale = true;
@@ -851,22 +888,29 @@ export class Game {
       goal = best;
     }
     if (terrain[start] !== Terrain.Water) return null;
-    const prev = new Map<number, number>([[start, -1]]);
-    const queue = [start];
+    // typed-array BFS with a visit stamp (no per-call allocation: this runs often on big maps)
+    if (!this.bfsPrev) { this.bfsPrev = new Int32Array(w * h); this.bfsSeen = new Uint32Array(w * h); this.bfsQueue = new Int32Array(w * h); }
+    const prev = this.bfsPrev, seenAt = this.bfsSeen!, queue = this.bfsQueue!;
+    const stamp = ++this.bfsStamp;
+    seenAt[start] = stamp; prev[start] = -1;
+    let qn = 1;
+    queue[0] = start;
     let found = start === goal;
-    for (let qi = 0; qi < queue.length && !found && queue.length < 400000; qi++) {
+    for (let qi = 0; qi < qn && !found; qi++) {
       const t = queue[qi];
-      const x = t % w, y = (t / w) | 0;
-      for (const n of [x > 0 ? t - 1 : -1, x < w - 1 ? t + 1 : -1, y > 0 ? t - w : -1, y < h - 1 ? t + w : -1]) {
-        if (n < 0 || prev.has(n) || terrain[n] !== Terrain.Water) continue;
-        prev.set(n, t);
+      const x = t % w;
+      for (let d = 0; d < 4; d++) {
+        const n = d === 0 ? (x > 0 ? t - 1 : -1) : d === 1 ? (x < w - 1 ? t + 1 : -1) : d === 2 ? t - w : t + w;
+        if (n < 0 || n >= w * h || seenAt[n] === stamp || terrain[n] !== Terrain.Water) continue;
+        seenAt[n] = stamp;
+        prev[n] = t;
         if (n === goal) { found = true; break; }
-        queue.push(n);
+        queue[qn++] = n;
       }
     }
     if (!found) return null;
     const tiles: number[] = [];
-    for (let t = goal; t !== -1; t = prev.get(t)!) tiles.push(t);
+    for (let t = goal; t !== -1; t = prev[t]) tiles.push(t);
     tiles.reverse();
     // keep every 4th tile plus the end
     const out: [number, number][] = [];
@@ -908,8 +952,8 @@ export class Game {
     // combat: SAMs, fighters, warships
     for (const k of this.units) {
       if (k.kind === "f" || k.kind === "b") {
-        for (const s of this.structures) {
-          if (s.type !== "sam" || this.friendly(s.owner, k.owner)) continue;
+        for (const s of this.structsOfType("sam")) {
+          if (this.friendly(s.owner, k.owner)) continue;
           const r = CFG.structures.sam.range;
           if ((s.x + 0.5 - k.x) ** 2 + (s.y + 0.5 - k.y) ** 2 <= r * r) {
             const so = this.players[s.owner];
@@ -1068,13 +1112,14 @@ export class Game {
 
   /** Ports periodically send trade ships to ports of other nations (unless embargoed). */
   private stepTrade(): void {
-    for (const port of this.structures) {
-      if (port.type !== "port" || (this.tickNo + port.id * 37) % CFG.tradeEvery !== 0) continue;
+    const ports = this.structsOfType("port");
+    for (const port of ports) {
+      if ((this.tickNo + port.id * 37) % CFG.tradeEvery !== 0) continue;
       if (this.units.filter((u) => u.kind === "r" && u.owner === port.owner).length >= CFG.maxTradeShips) continue;
       const me = this.players[port.owner];
       let best: Structure | null = null, bd = 1e9;
-      for (const o of this.structures) {
-        if (o.type !== "port" || o.owner === port.owner) continue;
+      for (const o of ports) {
+        if (o.owner === port.owner) continue;
         const op = this.players[o.owner];
         if (me.embargo.includes(o.owner) || op.embargo.includes(port.owner)) continue;
         const d = (o.x - port.x) ** 2 + (o.y - port.y) ** 2;
@@ -1301,12 +1346,8 @@ export class Game {
     this.stepTrade();
     if (this.railStale && this.tickNo % 10 === 0) this.recomputeRails();
     this.stepTrains();
-    const counts = new Map<number, Record<string, number>>();
-    for (const st of this.structures) {
-      const c = counts.get(st.owner) ?? {};
-      c[st.type] = (c[st.type] ?? 0) + 1;
-      counts.set(st.owner, c);
-    }
+    this.refreshCaches();
+    const counts = this.countsCache;
     const researching = this.research && this.phase !== "expand";
     for (let id = 1; id < this.players.length; id++) {
       const p = this.players[id];
@@ -1321,12 +1362,14 @@ export class Game {
         regen += (c.farm ?? 0) * CFG.farmRegen;
         if (this.has(p, "mil3")) regen *= 1.25;
         if (this.planet === "frozen") regen *= 0.6;
+        if (p.isBot) regen *= DIFFICULTY[this.difficulty].botRegen;
         p.troops = Math.min(cap, p.troops + regen);
       }
       let gold = CFG.goldBase + p.tiles * CFG.goldPerTile + (c.bank ?? 0) * CFG.bankGold * (this.has(p, "econ2") ? 2 : 1);
       gold += (c.port ?? 0) * CFG.portGold + (c.city ?? 0) * CFG.cityGold + (c.factory ?? 0) * CFG.factoryGold;
       if (p.tech.length) gold *= 1 + (this.has(p, "econ1") ? 0.15 : 0) + (this.has(p, "econ2") ? 0.25 : 0);
       if (this.planet === "desert") gold *= 0.6;
+      if (p.isBot) gold *= DIFFICULTY[this.difficulty].botGold;
       p.gold += gold;
       if (researching) p.rp += p.tiles * CFG.rpPerTile + (c.lab ?? 0) * CFG.labRp;
       if (p.isBot && (this.tickNo + id) % this.thinkEvery === 0) botThink(this, p);
@@ -1599,7 +1642,7 @@ export class Game {
       v: 1,
       seed: this.seed, w: this.w, h: this.h, mode: this.mode, teams: this.teams, planet: this.planet,
       terrain: rle(this.terrain), owner: rle(this.owner), wall: rle(this.wall), rail: rle(this.rail),
-      dominance: this.dominance, domLeader: this.domLeader, domTicks: this.domTicks,
+      dominance: this.dominance, domLeader: this.domLeader, domTicks: this.domTicks, difficulty: this.difficulty,
       players: this.players.slice(1),
       structures: this.structures,
       attacks: this.attacks.map((a) => ({ ...a, tiles: [...a.tiles] })),
@@ -1615,7 +1658,7 @@ export class Game {
   static restore(s: GameSnapshot): Game {
     const terrain = new Uint8Array(s.w * s.h);
     unrle(s.terrain, terrain);
-    const g = new Game(s.seed, s.w, s.h, { mode: s.mode, teams: s.teams, planet: s.planet, terrain, dominance: s.dominance });
+    const g = new Game(s.seed, s.w, s.h, { mode: s.mode, teams: s.teams, planet: s.planet, terrain, dominance: s.dominance, difficulty: s.difficulty });
     (g as { teams: number }).teams = s.teams;
     unrle(s.owner, g.owner);
     unrle(s.wall, g.wall);
@@ -1625,6 +1668,7 @@ export class Game {
     for (const pl of s.players) { pl.embargo ??= []; }
     g.players.push(...s.players);
     g.structures.push(...s.structures);
+    g.structVer++;
     for (const st of g.structures) g.structAt.set(st.tile, st);
     for (const a of s.attacks) g.attacks.push({ ...a, tiles: new Set(a.tiles) });
     g.units.push(...s.units);
